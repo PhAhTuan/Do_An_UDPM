@@ -1,0 +1,523 @@
+:root {
+    --bg-main: #202428;
+    --bg-card: #272c33;
+    --text-main: #ffffff;
+    --text-muted: #8a9097;
+    --accent-teal: #0dcaf0;
+    --teal-bg: #0aa2a1; /* Màu nền của thẻ Lịch học */
+}
+
+* { 
+    box-sizing: border-box; 
+    margin: 0; 
+    padding: 0; 
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+}
+
+body { 
+    background-color: var(--bg-main); 
+    color: var(--text-main); 
+    padding-bottom: 60px; 
+}
+
+/* ================= HEADER & DROPDOWN ================= */
+header { 
+    background-color: #1a1d20; 
+    padding: 15px 40px; 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    border-bottom: 1px solid #2e343a; 
+    position: relative;
+    z-index: 1000;
+}
+
+.brand { 
+    font-size: 22px; 
+    font-weight: bold; 
+    color: var(--accent-teal); 
+}
+
+.user-dropdown { position: relative; }
+
+.user-trigger {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+    padding: 6px 12px;
+    border-radius: 8px;
+    transition: background-color 0.2s;
+}
+
+.user-trigger:hover { background-color: #272c33; }
+
+.header-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    object-fit: cover;
+    border: 1px solid #363c45;
+    background-color: #15171a;
+}
+
+.user-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e0e0e0;
+}
+
+.chevron {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+/* Khung Menu thả xuống */
+.dropdown-menu {
+    display: none; /* Mặc định ẩn */
+    position: absolute;
+    top: 110%;
+    right: 0;
+    background-color: #1e2227;
+    border: 1px solid #363c45;
+    border-radius: 8px;
+    width: 260px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+    flex-direction: column;
+    padding: 10px 0;
+    z-index: 9999;
+}
+
+.dropdown-menu.show { display: flex; } 
+.dropdown-item {
+    padding: 12px 20px;
+    color: #c4c4c4;
+    text-decoration: none;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    transition: 0.2s;
+}
+
+.dropdown-item:hover {
+    background-color: #272c33;
+    color: white;
+}
+
+.icon-placeholder {
+    width: 25px; 
+    display: inline-block;
+    font-size: 16px;
+    opacity: 0.8;
+}
+
+.divider {
+    height: 1px;
+    background-color: #363c45;
+    margin: 8px 0;
+}
+
+
+.ticket-badge {
+    background-color: #ff4d4d;
+    color: white;
+    font-size: 11px;
+    font-weight: bold;
+    padding: 3px 8px;
+    border-radius: 12px;
+    margin-left: auto; /* Đẩy badge về sát lề phải */
+}
+
+/* ================= LAYOUT CHÍNH ================= */
+
+.container { 
+    max-width: 1300px; 
+    margin: 30px auto; 
+    padding: 0 15px; 
+}
+
+.main-grid { 
+    display: grid; 
+    grid-template-columns: 2fr 1fr; 
+    gap: 20px; 
+    align-items: start; 
+}
+
+.left-col { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 20px; 
+}
+
+.right-col { 
+    display: flex; 
+    flex-direction: column; 
+    gap: 20px; 
+}
+
+/* ================= STYLE CHUNG CHO CARD ================= */
+.card { 
+    background-color: var(--bg-card); 
+    border-radius: 8px; 
+    padding: 20px; 
+    box-shadow: 0 4px 10px rgba(0,0,0,0.15); 
+}
+
+.card-header-title { 
+    color: var(--accent-teal); 
+    font-size: 18px; 
+    font-weight: bold; 
+    margin-bottom: 20px; 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center;
+}
+
+/* ================= CARD 1: THÔNG TIN SINH VIÊN ================= */
+.student-flex { 
+    display: flex; 
+    gap: 25px; 
+}
+
+.student-flex img { 
+    width: 130px; 
+    height: 170px; 
+    border-radius: 6px; 
+    object-fit: cover; 
+    background-color: #1a1d20; 
+    border: 2px solid #363c45;
+}
+
+.info-grid { 
+    display: grid; 
+    grid-template-columns: 1fr 1fr; 
+    gap: 15px 30px; 
+    flex-grow: 1; 
+    font-size: 14px;
+}
+
+.info-field { 
+    display: flex; 
+    gap: 5px; 
+}
+
+.info-field span.label { 
+    color: var(--text-muted); 
+    width: 110px; 
+    display: inline-block; 
+    font-weight: 500;
+}
+
+.info-field span.val { 
+    color: var(--text-main); 
+    font-weight: 500; 
+}
+
+/* ================= KHỐI CHIA ĐÔI: THÔNG BÁO & LỊCH HỌC ================= */
+.split-cards { 
+    display: grid; 
+    grid-template-columns: 1fr 1fr; 
+    gap: 20px; 
+}
+
+/* Thông báo */
+.notice-card .amount { 
+    font-size: 32px; 
+    font-weight: bold; 
+    color: white; 
+    display: inline-block; 
+    margin-right: 10px; 
+    margin-top: 10px;
+}
+
+.notice-card .status { 
+    color: #ff4d4d; 
+    font-size: 13px; 
+    font-weight: bold; 
+}
+
+
+.schedule-card { 
+    background-color: var(--teal-bg); 
+}
+
+.schedule-card .card-header-title { 
+    color: white; 
+    margin-bottom: 10px; 
+}
+
+.schedule-card .amount { 
+    font-size: 36px; 
+    font-weight: bold; 
+    color: white; 
+    margin-top: 5px;
+}
+
+/* ================= MENU CHỨC NĂNG (BÊN DƯỚI) ================= */
+.action-grid { 
+    display: grid; 
+    grid-template-columns: repeat(4, 1fr); /* 4 nút 1 hàng -> 8 nút tự rớt thành 2 hàng đều nhau */
+    gap: 15px; 
+    margin-top: 25px; /* Thêm khoảng cách với khối bên trên */
+}
+
+.action-box { 
+    background-color: var(--bg-card); 
+    border-radius: 8px; 
+    height: 115px; 
+    display: flex; 
+    align-items: flex-end; 
+    justify-content: center; 
+    padding: 15px; 
+    font-size: 13px; 
+    font-weight: 600; 
+    text-align: center; 
+    cursor: pointer; 
+    transition: 0.2s; 
+    color: var(--text-muted);
+}
+
+.action-box:hover { 
+    background-color: #313740; 
+    color: white;
+}
+
+/* ================= CỘT PHẢI: LỊCH THÁNG ================= */
+.calendar-card { 
+    height: 100%; 
+}
+
+.cal-nav { 
+    display: flex; 
+    gap: 10px; 
+    color: var(--text-muted); 
+    align-items: center; 
+    font-size: 13px;
+    user-select: none;
+}
+
+.cal-grid { 
+    display: grid; 
+    grid-template-columns: repeat(7, 1fr); 
+    gap: 8px; 
+    text-align: center; 
+    margin-top: 15px;
+}
+
+.cal-day { 
+    font-weight: bold; 
+    color: var(--text-muted); 
+    font-size: 12px; 
+    margin-bottom: 10px;
+}
+
+.cal-day.sun { 
+    color: #ff8c00; 
+}
+
+.cal-num { 
+    padding: 8px 0; 
+    font-size: 13px; 
+    border-radius: 4px; 
+    background-color: #202428; 
+    color: var(--text-muted);
+}
+
+.cal-num.active { 
+    background-color: #1d4349; 
+    color: var(--accent-teal); 
+    border: 1px solid var(--accent-teal);
+}
+
+.cal-num.sun-num { 
+    color: #ff8c00; 
+}
+
+.cal-btn {
+    cursor: pointer;
+    padding: 0 5px;
+    font-weight: bold;
+}
+
+.cal-btn:hover { color: var(--text-main); }
+
+.cal-num.empty { background-color: transparent; }
+
+/* ================= KHỐI BOTTOM: TIẾN ĐỘ & KẾT QUẢ ================= */
+.bottom-section { 
+    display: grid; 
+    grid-template-columns: 1fr 1fr 1.5fr; 
+    gap: 20px; 
+    margin-top: 20px; 
+}
+
+
+.progress-circle-container { 
+    display: flex; 
+    justify-content: center; 
+    align-items: center; 
+    height: 140px;
+}
+
+.circle-bar { 
+    width: 120px; 
+    height: 120px; 
+    border-radius: 50%; 
+    background: conic-gradient(var(--teal-bg) 270deg, #202428 0deg); 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+}
+
+.circle-inner { 
+    width: 95px; 
+    height: 95px; 
+    background-color: var(--bg-card); 
+    border-radius: 50%; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; 
+    font-size: 13px; 
+    font-weight: bold;
+}
+
+
+.subject-list { 
+    list-style: none; 
+    font-size: 13px;
+}
+
+.subject-list li { 
+    padding: 12px 0; 
+    border-bottom: 1px solid #363c45; 
+    display: flex; 
+    justify-content: space-between; 
+    color: #d0d0d0;
+}
+
+/* ================= CHATBOT WIDGET ================= */
+.bot-widget { 
+    position: fixed; 
+    bottom: 25px; 
+    right: 25px; 
+    z-index: 9999; 
+}
+
+.bot-launcher { 
+    width: 55px; 
+    height: 55px; 
+    border-radius: 50%; 
+    background-color: var(--teal-bg); 
+    color: white; 
+    border: none; 
+    font-size: 24px; 
+    cursor: pointer; 
+    box-shadow: 0 4px 15px rgba(0,0,0,0.4); 
+}
+
+.bot-window { 
+    display: none; 
+    width: 360px; 
+    height: 480px; 
+    background-color: #1a1d20; 
+    border: 1px solid #363c45; 
+    border-radius: 10px; 
+    position: absolute; 
+    bottom: 65px; 
+    right: 0; 
+    box-shadow: 0 5px 25px rgba(0,0,0,0.5); 
+    flex-direction: column; 
+    overflow: hidden; 
+}
+
+.bot-header { 
+    background-color: var(--teal-bg); 
+    padding: 12px 15px; 
+    font-weight: bold; 
+    font-size: 14px; 
+    display: flex; 
+    justify-content: space-between; 
+    align-items: center; 
+    color: white;
+}
+
+.bot-body { 
+    flex-grow: 1; 
+    padding: 15px; 
+    overflow-y: auto; 
+    display: flex; 
+    flex-direction: column; 
+    gap: 12px; 
+    font-size: 13px;
+}
+
+.chat-msg { 
+    max-width: 80%; 
+    padding: 10px; 
+    border-radius: 8px; 
+    line-height: 1.4; 
+}
+
+.chat-msg.bot { 
+    background-color: var(--bg-card); 
+    align-self: flex-start; 
+    color: white; 
+    border: 1px solid #363c45;
+}
+
+.chat-msg.user { 
+    background-color: var(--teal-bg); 
+    align-self: flex-end; 
+    color: white; 
+}
+
+.bot-footer { 
+    display: flex; 
+    padding: 10px; 
+    background-color: #15171a; 
+    border-top: 1px solid #363c45; 
+}
+
+.bot-footer input { 
+    flex-grow: 1; 
+    background-color: var(--bg-card); 
+    border: 1px solid #363c45; 
+    padding: 8px 12px; 
+    color: white; 
+    border-radius: 4px; 
+    outline: none;
+}
+
+.bot-footer button { 
+    background-color: var(--teal-bg); 
+    border: none; 
+    padding: 8px 15px; 
+    color: white; 
+    margin-left: 8px; 
+    border-radius: 4px; 
+    cursor: pointer; 
+    font-weight: bold;
+}
+
+/* Nút gợi ý câu hỏi Chatbot */
+.chat-suggestions { 
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 8px; 
+    margin-top: 10px; 
+    margin-bottom: 10px;}
+
+.suggestion-chip { 
+    background-color: #1a1d20; 
+    border: 1px solid var(--accent-teal); 
+    color: var(--accent-teal); 
+    padding: 6px 12px; 
+    border-radius: 20px; 
+    font-size: 11px; 
+    cursor: pointer; 
+    transition: 0.3s;
+}
+.suggestion-chip:hover { 
+    background-color: var(--accent-teal); 
+    color: #000; 
+    font-weight: bold;}
