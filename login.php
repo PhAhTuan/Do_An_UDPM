@@ -1,22 +1,36 @@
 <?php
 session_start();
-$error = "";
+$error = '';
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $username = trim($_POST['username']);
-    $password = trim($_POST['password']);
+    $password = $_POST['password'];
 
-    if ($username === 'admin' && $password === '123456') {
-        $_SESSION['user'] = 'Admin';
-        $_SESSION['role'] = 'admin';
-        header("Location: admin.php");
-        exit();
-    } elseif ($username === '075205019210') {
-        $_SESSION['user'] = 'Phạm Anh Tuấn';
-        $_SESSION['role'] = 'student';
-        $_SESSION['mssv'] = '075205019210';
-        header("Location: dashboard.php");
-        exit();
+    // Kết nối Database
+    $pdo = new PDO("mysql:host=localhost;dbname=uth_db;charset=utf8mb4", "root", "");
+    
+    // Tìm tài khoản trong DB
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
+    $stmt->execute([$username]);
+    $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    // Kiểm tra tài khoản và mật khẩu
+    if ($user && $password === $user['password']) {
+        // Lưu thông tin vào Session
+        $_SESSION['user_id'] = $user['id'];
+        $_SESSION['username'] = $user['username'];
+        $_SESSION['role'] = $user['role'];
+        $_SESSION['ho_ten'] = $user['ho_ten'];
+
+        // Điều hướng dựa trên Role
+        if ($user['role'] === 'admin') {
+            header("Location: admin_dashboard.php");
+        } else {
+            // Nếu là sinh viên, gán thêm session mssv để tương thích với code Bot cũ
+            $_SESSION['mssv'] = $user['username']; 
+            header("Location: dashboard.php");
+        }
+        exit;
     } else {
         $error = "Tài khoản hoặc mật khẩu không chính xác!";
     }

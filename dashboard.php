@@ -1,7 +1,16 @@
 <?php
 session_start();
-// Kết nối DB
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
+    header("Location: login.php");
+    exit();
+}
+
 $pdo = new PDO("mysql:host=localhost;dbname=uth_db;charset=utf8mb4", "root", "");
+
+// LẤY THÔNG TIN CÁ NHÂN TỪ BẢNG USERS
+$stmtUser = $pdo->prepare("SELECT * FROM users WHERE username = ?");
+$stmtUser->execute([$_SESSION['username']]);
+$studentInfo = $stmtUser->fetch(PDO::FETCH_ASSOC);
 
 // Xử lý khi sinh viên bấm nút "Đã hiểu" -> Chuyển trạng thái thành 'read' (đã đọc) để ẩn thông báo
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'mark_read') {
@@ -290,5 +299,35 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
         document.getElementById('studentNotiModal').classList.add('active');
     }
 </script>
+<style>
+    .profile-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 20px; }
+    .info-item { background: #121416; padding: 12px; border-radius: 4px; border: 1px solid #2c3138; }
+    .info-label { color: var(--text-muted); font-size: 12px; margin-bottom: 5px; }
+    .info-value { color: white; font-weight: bold; font-size: 14px; }
+</style>
+
+<div class="stu-modal-overlay" id="profileModal">
+    <div class="stu-modal-box" style="width: 700px;">
+        <div class="stu-modal-title">Hồ sơ Sinh viên</div>
+        
+        <div class="profile-grid">
+            <div class="info-item"><div class="info-label">MSSV</div><div class="info-value"><?php echo $studentInfo['username']; ?></div></div>
+            <div class="info-item"><div class="info-label">Họ và tên</div><div class="info-value"><?php echo $studentInfo['ho_ten']; ?></div></div>
+            <div class="info-item"><div class="info-label">Ngày sinh</div><div class="info-value"><?php echo date('d/m/Y', strtotime($studentInfo['ngay_sinh'])); ?></div></div>
+            <div class="info-item"><div class="info-label">Nơi sinh</div><div class="info-value"><?php echo $studentInfo['noi_sinh']; ?></div></div>
+            <div class="info-item"><div class="info-label">Giới tính</div><div class="info-value"><?php echo $studentInfo['gioi_tinh']; ?></div></div>
+            <div class="info-item"><div class="info-label">Khóa học</div><div class="info-value"><?php echo $studentInfo['khoa_hoc']; ?></div></div>
+            <div class="info-item"><div class="info-label">Bậc đào tạo</div><div class="info-value"><?php echo $studentInfo['bac_dao_tao']; ?></div></div>
+            <div class="info-item"><div class="info-label">Loại hình đào tạo</div><div class="info-value"><?php echo $studentInfo['loai_hinh_dao_tao']; ?></div></div>
+            <div class="info-item" style="grid-column: span 2;"><div class="info-label">Ngành học</div><div class="info-value"><?php echo $studentInfo['nganh']; ?></div></div>
+            <div class="info-item" style="grid-column: span 2;"><div class="info-label">Chuyên ngành</div><div class="info-value"><?php echo $studentInfo['chuyen_nganh']; ?></div></div>
+        </div>
+
+        <button class="btn-read" style="margin-top: 20px;" onclick="document.getElementById('profileModal').classList.remove('active')">Đóng</button>
+        <div style="clear: both;"></div>
+    </div>
+</div>
+
+<a href="#" class="dropdown-item" onclick="document.getElementById('profileModal').classList.add('active'); toggleUserMenu();">👤 Thông tin cá nhân</a>
 </body>
 </html>

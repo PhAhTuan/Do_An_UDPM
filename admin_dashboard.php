@@ -5,7 +5,6 @@ $pdo = new PDO("mysql:host=localhost;dbname=uth_db;charset=utf8mb4", "root", "")
 
 // XÁC ĐỊNH TAB ĐANG HOẠT ĐỘNG (Mặc định là dashboard nếu không có tham số)
 $currentTab = $_GET['tab'] ?? 'dashboard';
-
 // =========================================================================
 // XỬ LÝ LỆNH TỪ GIAO DIỆN ADMIN (THÊM / SỬA / XÓA FAQ / REPLY TICKET)
 // =========================================================================
@@ -19,6 +18,28 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         header("Location: admin_dashboard.php?tab=faq");
         exit;
     } 
+    // Thêm vào khối if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']))
+    // Xử lý Thêm Tài khoản Sinh viên (Đã bổ sung full thông tin)
+    elseif ($action === 'add_user') {
+        $stmt = $pdo->prepare("INSERT INTO users (username, password, ho_ten, ngay_sinh, noi_sinh, nganh, khoa_hoc, gioi_tinh, bac_dao_tao, loai_hinh_dao_tao, chuyen_nganh, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'student')");
+        
+        $stmt->execute([
+            $_POST['mssv'],
+            $_POST['password'],
+            $_POST['ho_ten'],
+            $_POST['ngay_sinh'],
+            $_POST['noi_sinh'],
+            $_POST['nganh'],
+            $_POST['khoa_hoc'],
+            $_POST['gioi_tinh'],
+            $_POST['bac_dao_tao'],
+            $_POST['loai_hinh_dao_tao'],
+            $_POST['chuyen_nganh']
+        ]);
+        
+        header("Location: admin_dashboard.php?tab=users");
+        exit;
+    }
     elseif ($action === 'edit_faq') {
         $stmt = $pdo->prepare("UPDATE faq SET tu_khoa = ?, noi_dung = ? WHERE id = ?");
         $stmt->execute([$_POST['tu_khoa'], $_POST['noi_dung'], $_POST['faq_id']]);
@@ -51,6 +72,7 @@ $totalFaq = $pdo->query("SELECT COUNT(*) FROM faq")->fetchColumn();
 
 $recentTickets = $pdo->query("SELECT * FROM tickets ORDER BY created_at DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
 $faqs = $pdo->query("SELECT * FROM faq ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC); 
+$students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
 ?>
 
 <!DOCTYPE html>
@@ -74,6 +96,7 @@ $faqs = $pdo->query("SELECT * FROM faq ORDER BY id DESC")->fetchAll(PDO::FETCH_A
             <div class="menu-item <?php echo $currentTab === 'dashboard' ? 'active' : ''; ?>" onclick="switchTab('dashboard', this)">📊 Tổng quan</div>
             <div class="menu-item <?php echo $currentTab === 'tickets' ? 'active' : ''; ?>" onclick="switchTab('tickets', this)">🎫 Hỗ trợ Tickets</div>
             <div class="menu-item <?php echo $currentTab === 'faq' ? 'active' : ''; ?>" onclick="switchTab('faq', this)">📚 Quản lý Bot (FAQ)</div>
+            <div class="menu-item <?php echo $currentTab === 'users' ? 'active' : ''; ?>" onclick="switchTab('users', this)">👥 Quản lý Sinh viên</div>
             <div class="menu-item <?php echo $currentTab === 'logs' ? 'active' : ''; ?>" onclick="switchTab('logs', this)">💬 Lịch sử Chat</div>
             <a href="login.php" class="menu-item" style="margin-top: auto; border-top: 1px solid #2c3138; color: var(--danger);">🚪 Đăng xuất</a>
         </div>
@@ -167,13 +190,116 @@ $faqs = $pdo->query("SELECT * FROM faq ORDER BY id DESC")->fetchAll(PDO::FETCH_A
                 </table>
             </div>
         </div>
+        
+        <div id="tab-users" class="tab-content <?php echo $currentTab === 'users' ? 'active' : ''; ?>">
+    <div class="page-title">
+        <span>Danh sách Tài khoản Sinh viên</span>
+        <button class="btn" onclick="document.getElementById('addUserModal').classList.add('active')">+ Cấp tài khoản mới</button>
+    </div>
+    <div class="table-container">
+        <table>
+            <thead><tr><th>MSSV (Tài khoản)</th><th>Họ và tên</th><th>Ngành / Khóa</th><th>Mật khẩu</th></tr></thead>
+            <tbody>
+                <?php foreach($students as $sv): ?>
+                <tr>
+                    <td><b><?php echo $sv['username']; ?></b></td>
+                    <td><?php echo $sv['ho_ten']; ?></td>
+                    <td><?php echo $sv['nganh']; ?> - <?php echo $sv['khoa_hoc']; ?></td>
+                    <td style="color: var(--danger); font-family: monospace;"><?php echo $sv['password']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+</div>
 
         <div id="tab-logs" class="tab-content <?php echo $currentTab === 'logs' ? 'active' : ''; ?>">
             <div class="page-title"><span>Lịch sử trò chuyện Sinh viên - Bot</span></div>
             <p style="color: var(--text-muted); text-align: center; margin-top: 50px;">Tính năng đang được nâng cấp...</p>
         </div>
     </div>
+    
 
+<div class="modal-overlay" id="addUserModal">
+    <div class="modal-box" style="width: 750px; max-height: 90vh; overflow-y: auto;">
+        <div class="modal-header">
+            <h3>Cấp tài khoản Sinh viên mới</h3>
+            <span class="close-btn" onclick="closeModal('addUserModal')">✖</span>
+        </div>
+        <form method="POST" action="admin_dashboard.php">
+            <input type="hidden" name="action" value="add_user">
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px;">
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">MSSV (Dùng để đăng nhập) *</label>
+                    <input type="text" name="mssv" class="faq-input" required>
+                </div>
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Mật khẩu *</label>
+                    <input type="text" name="password" class="faq-input" value="123456" required>
+                </div>
+
+                <div style="grid-column: span 2;">
+                    <label style="color:var(--text-muted); font-size:14px;">Họ và tên *</label>
+                    <input type="text" name="ho_ten" class="faq-input" required>
+                </div>
+
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Ngày sinh</label>
+                    <input type="date" name="ngay_sinh" class="faq-input">
+                </div>
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Giới tính</label>
+                    <select name="gioi_tinh" class="faq-input" style="height: 44px;">
+                        <option value="Nam">Nam</option>
+                        <option value="Nữ">Nữ</option>
+                    </select>
+                </div>
+
+                <div style="grid-column: span 2;">
+                    <label style="color:var(--text-muted); font-size:14px;">Nơi sinh</label>
+                    <input type="text" name="noi_sinh" class="faq-input" placeholder="VD: TP. Hồ Chí Minh">
+                </div>
+
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Ngành học</label>
+                    <input type="text" name="nganh" class="faq-input" placeholder="VD: Công nghệ thông tin">
+                </div>
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Chuyên ngành</label>
+                    <input type="text" name="chuyen_nganh" class="faq-input" placeholder="VD: Kỹ thuật phần mềm">
+                </div>
+
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Khóa học</label>
+                    <input type="text" name="khoa_hoc" class="faq-input" placeholder="VD: Khóa 2021">
+                </div>
+                <div>
+                    <label style="color:var(--text-muted); font-size:14px;">Bậc đào tạo</label>
+                    <select name="bac_dao_tao" class="faq-input" style="height: 44px;">
+                        <option value="Đại học">Đại học</option>
+                        <option value="Cao đẳng">Cao đẳng</option>
+                        <option value="Thạc sĩ">Thạc sĩ</option>
+                    </select>
+                </div>
+
+                <div style="grid-column: span 2;">
+                    <label style="color:var(--text-muted); font-size:14px;">Loại hình đào tạo</label>
+                    <select name="loai_hinh_dao_tao" class="faq-input" style="height: 44px;">
+                        <option value="Chính quy">Chính quy</option>
+                        <option value="Vừa làm vừa học">Vừa làm vừa học</option>
+                        <option value="Đào tạo từ xa">Đào tạo từ xa</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div style="text-align: right; margin-top: 10px; border-top: 1px solid #2c3138; padding-top: 15px;">
+                <button type="button" class="btn btn-outline" style="margin-right: 10px;" onclick="closeModal('addUserModal')">Hủy bỏ</button>
+                <button type="submit" class="btn">Tạo tài khoản</button>
+            </div>
+        </form>
+    </div>
+</div>
     <div class="modal-overlay" id="replyModal">
         <div class="modal-box">
             <div class="modal-header">
@@ -216,6 +342,7 @@ $faqs = $pdo->query("SELECT * FROM faq ORDER BY id DESC")->fetchAll(PDO::FETCH_A
             </form>
         </div>
     </div>
+    
 
     <script>
         function switchTab(tabId, element) {
