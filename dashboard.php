@@ -45,7 +45,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
     <div class="user-dropdown">
         <div class="user-trigger" onclick="toggleUserMenu()">
             <img src="images/logo.png" alt="Avatar" class="header-avatar">
-            <span class="user-name"><?php echo htmlspecialchars($_SESSION['user']); ?></span>
+            <span class="user-name"><?php echo htmlspecialchars($_SESSION['ho_ten'] ?? 'Sinh viên'); ?></span>
             <span class="chevron">▼</span>
         </div>
         
@@ -60,10 +60,10 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
             
             <?php foreach($notifications as $noti): ?>
                 <a href="#" class="dropdown-item" style="background: rgba(0, 188, 212, 0.05); border-left: 3px solid var(--accent-teal);" 
-                   onclick="openStudentModal(<?php echo $noti['id']; ?>, '<?php echo htmlspecialchars($noti['title'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($noti['admin_reply'], ENT_QUOTES); ?>')">
-                     Admin đã phản hồi Ticket #<?php echo $noti['id']; ?>
+                   onclick="openStudentChat(<?php echo $noti['id']; ?>, '<?php echo htmlspecialchars($noti['title'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($noti['content'], ENT_QUOTES); ?>'); toggleUserMenu();">
+                      Cập nhật Ticket #<?php echo $noti['id']; ?>
                 </a>
-            <?php endforeach; ?> 
+            <?php endforeach; ?>
             
             <?php if($notiCount == 0): ?>
                 <div style="padding: 10px 15px; text-align: center; color: gray; font-size: 13px;">Không có thông báo mới.</div>
@@ -89,7 +89,7 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
                         <div class="info-grid">
                             <div class="info-field"><span class="label">MSSV:</span> <span class="val"><?php echo $_SESSION['mssv']; ?></span></div>
                             <div class="info-field"><span class="label">Khóa học:</span> <span class="val">2023</span></div>
-                            <div class="info-field"><span class="label">Họ tên:</span> <span class="val"><?php echo $_SESSION['user']; ?></span></div>
+                            <div class="info-field"><span class="label">Họ tên:</span> <span class="val"><?php echo htmlspecialchars($_SESSION['ho_ten'] ?? 'Sinh viên'); ?></span></div>
                             <div class="info-field"><span class="label">Giới tính:</span> <span class="val">Nam</span></div>
                             <div class="info-field"><span class="label">Ngày sinh:</span> <span class="val">10/12/2005</span></div>
                             <div class="info-field"><span class="label">Bậc đào tạo:</span> <span class="val">Đại học - chính quy</span></div>
@@ -264,6 +264,67 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
                 }
             }
         }
+// Biến toàn cục để giữ lại câu hỏi gốc của SV
+let current_original_content = ''; 
+
+function openStudentChat(ticket_id, title, original_content) {
+    document.getElementById('chat_ticket_id').value = ticket_id;
+    document.getElementById('chatTitle').innerText = title;
+    document.getElementById('studentChatModal').classList.add('active');
+    current_original_content = original_content; 
+    loadChat(ticket_id);
+}
+
+function loadChat(id) {
+    let box = document.getElementById('studentChatHistory');
+    box.innerHTML = '<div style="text-align: center; color: gray;">Đang tải...</div>';
+    
+    fetch('api_get_student_chat.php?id=' + id)
+    .then(res => res.json())
+    .then(data => {
+        box.innerHTML = '';
+        
+        // In câu hỏi ban đầu của Sinh viên
+        box.innerHTML += `<div class="msg-bubble msg-student">
+                            <div style="font-size: 11px; opacity: 0.7; margin-bottom: 3px; color: #00bcd4;">📌 Câu hỏi của bạn</div>
+                            <div>${current_original_content}</div>
+                          </div>`;
+        
+        // In lịch sử Admin - SV nhắn qua lại
+        data.messages.forEach(msg => {
+            let role = msg.sender_role === 'admin' ? 'msg-admin' : 'msg-student';
+            let sender = msg.sender_role === 'admin' ? 'Admin UTH' : 'Bạn';
+            box.innerHTML += `<div class="msg-bubble ${role}">
+                                <div style="font-size: 11px; opacity: 0.7; margin-bottom: 3px;"><b>${sender}</b></div>
+                                <div>${msg.message}</div>
+                                <div style="font-size: 10px; opacity: 0.5; margin-top: 5px; text-align: right;">${msg.time_str}</div>
+                              </div>`;
+        });
+        box.scrollTop = box.scrollHeight;
+        
+        // Kiểm tra đóng Ticket
+        if(data.is_closed == 1) {
+            document.getElementById('chatInput').disabled = true;
+            document.getElementById('chatInput').placeholder = "🔒 Ticket này đã bị đóng bởi Admin.";
+            document.getElementById('btnSend').style.display = 'none';
+        } else {
+            document.getElementById('chatInput').disabled = false;
+            document.getElementById('chatInput').placeholder = "Nhập tin nhắn trả lời...";
+            document.getElementById('btnSend').style.display = 'inline-block';
+        }
+    });
+}
+
+// Xử lý gửi tin nhắn (Bạn nhớ tạo thêm 1 file api_student_reply.php để INSERT tin nhắn vào DB nhé)
+document.getElementById('studentReplyForm').onsubmit = function(e) {
+    e.preventDefault();
+    let formData = new FormData(this);
+    fetch('api_student_reply.php', { method: 'POST', body: formData })
+    .then(() => {
+        document.getElementById('chatInput').value = '';
+        loadChat(document.getElementById('chat_ticket_id').value);
+    });
+};
     </script>
     <style>
     .stu-modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 9999; justify-content: center; align-items: center; }
@@ -304,6 +365,10 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
     .info-item { background: #121416; padding: 12px; border-radius: 4px; border: 1px solid #2c3138; }
     .info-label { color: var(--text-muted); font-size: 12px; margin-bottom: 5px; }
     .info-value { color: white; font-weight: bold; font-size: 14px; }
+    .stu-chat-box { height: 300px; overflow-y: auto; background: #121416; padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+    .msg-bubble { max-width: 80%; padding: 10px 15px; border-radius: 8px; font-size: 14px; }
+    .msg-admin { background: #2c3138; align-self: flex-start; }
+    .msg-student { background: rgba(0, 188, 212, 0.2); border: 1px solid var(--accent-teal); align-self: flex-end; }
 </style>
 
 <div class="stu-modal-overlay" id="profileModal">
@@ -327,7 +392,62 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
         <div style="clear: both;"></div>
     </div>
 </div>
+<div class="stu-modal-overlay" id="studentChatModal">
+    <div class="stu-modal-box" style="width: 600px;">
+        <div class="stu-modal-title" id="chatTitle">Chi tiết Ticket</div>
+        
+        <div class="stu-chat-box" id="studentChatHistory">
+            </div>
 
-<a href="#" class="dropdown-item" onclick="document.getElementById('profileModal').classList.add('active'); toggleUserMenu();">👤 Thông tin cá nhân</a>
+        <form id="studentReplyForm" style="margin-top: 15px;">
+            <input type="hidden" name="ticket_id" id="chat_ticket_id">
+            <textarea name="message" id="chatInput" class="faq-input" placeholder="Nhập tin nhắn trả lời..." style="width: 100%; height: 80px; margin-bottom: 10px;" required></textarea>
+            <button type="submit" class="btn-read" id="btnSend">Gửi phản hồi</button>
+            <button type="button" class="btn-read" style="background:#444; margin-right:10px;" onclick="document.getElementById('studentChatModal').classList.remove('active')">Đóng</button>
+        </form>
+    </div>
+</div>
+
+<script>
+// Hàm mở khung chat
+function openStudentChat(ticket_id, title) {
+    document.getElementById('chat_ticket_id').value = ticket_id;
+    document.getElementById('chatTitle').innerText = title;
+    document.getElementById('studentChatModal').classList.add('active');
+    loadChat(ticket_id);
+}
+
+// Hàm tải tin nhắn từ server
+function loadChat(id) {
+    fetch('api_get_student_chat.php?id=' + id)
+    .then(res => res.json())
+    .then(data => {
+        let box = document.getElementById('studentChatHistory');
+        box.innerHTML = '';
+        data.messages.forEach(msg => {
+            let role = msg.sender_role === 'admin' ? 'msg-admin' : 'msg-student';
+            box.innerHTML += `<div class="msg-bubble ${role}">${msg.message}</div>`;
+        });
+        box.scrollTop = box.scrollHeight;
+        
+        // Nếu admin đã đóng ticket thì khóa khung chat
+        if(data.is_closed == 1) {
+            document.getElementById('chatInput').disabled = true;
+            document.getElementById('btnSend').style.display = 'none';
+        }
+    });
+}
+
+// Xử lý gửi tin nhắn
+document.getElementById('studentReplyForm').onsubmit = function(e) {
+    e.preventDefault();
+    let formData = new FormData(this);
+    fetch('api_student_reply.php', { method: 'POST', body: formData })
+    .then(() => {
+        document.getElementById('chatInput').value = '';
+        loadChat(document.getElementById('chat_ticket_id').value);
+    });
+};
+</script>
 </body>
 </html>
