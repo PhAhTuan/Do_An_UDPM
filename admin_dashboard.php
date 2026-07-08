@@ -1,7 +1,13 @@
 <?php
 session_start();
-// Kết nối Database
-$pdo = new PDO("mysql:host=localhost;dbname=uth_db;charset=utf8mb4", "root", "");
+header('Content-Type: text/html; charset=UTF-8');
+if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+    header('Location: login.php'); exit();
+}
+// Kết nối Database dùng config tập trung
+include  __DIR__.'/config.php';
+require_once __DIR__.'/faq_helpers.php';
+$pdo = connectDatabase($db_host, $db_port, $db_name, $db_user, $db_pass);
 
 // XÁC ĐỊNH TAB ĐANG HOẠT ĐỘNG (Mặc định là dashboard nếu không có tham số)
 $currentTab = $_GET['tab'] ?? 'dashboard';
@@ -108,30 +114,37 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UTH Admin Dashboard</title>
     <link rel="stylesheet" href="css/admin.css">
-    <style>
-        .faq-input { width: 100%; background: #121416; color: white; border: 1px solid #2c3138; padding: 12px; border-radius: 4px; margin: 8px 0 20px; outline: none; }
-        .faq-input:focus { border-color: var(--accent-teal); }
-        .action-form { display: inline-block; margin: 0; }
-    </style>
+    <style>.action-form{display:inline-block;margin:0}</style>
 </head>
 <body>
 
     <div class="sidebar">
         <div class="logo">UTH ADMIN</div>
         <div class="menu">
-            <div class="menu-item <?php echo $currentTab === 'dashboard' ? 'active' : ''; ?>" onclick="switchTab('dashboard', this)">📊 Tổng quan</div>
-            <div class="menu-item <?php echo $currentTab === 'tickets' ? 'active' : ''; ?>" onclick="switchTab('tickets', this)">🎫 Hỗ trợ Tickets</div>
-            <div class="menu-item <?php echo $currentTab === 'faq' ? 'active' : ''; ?>" onclick="switchTab('faq', this)">📚 Quản lý Bot (FAQ)</div>
-            <div class="menu-item <?php echo $currentTab === 'users' ? 'active' : ''; ?>" onclick="switchTab('users', this)">👥 Quản lý Sinh viên</div>
-            <div class="menu-item <?php echo $currentTab === 'logs' ? 'active' : ''; ?>" onclick="switchTab('logs', this)">💬 Lịch sử Chat</div>
-            <a href="login.php" class="menu-item" style="margin-top: auto; border-top: 1px solid #2c3138; color: var(--danger);">🚪 Đăng xuất</a>
+            <div class="menu-item <?php echo $currentTab === 'dashboard' ? 'active' : ''; ?>" onclick="switchTab('dashboard', this)">Tổng quan</div>
+            <div class="menu-item <?php echo $currentTab === 'tickets' ? 'active' : ''; ?>" onclick="switchTab('tickets', this)">Hỗ trợ Tickets</div>
+            <div class="menu-item <?php echo $currentTab === 'faq' ? 'active' : ''; ?>" onclick="switchTab('faq', this)">Quản lý Bot (FAQ)</div>
+            <div class="menu-item <?php echo $currentTab === 'users' ? 'active' : ''; ?>" onclick="switchTab('users', this)">Quản lý Sinh viên</div>
+            <div class="menu-item <?php echo $currentTab === 'logs' ? 'active' : ''; ?>" onclick="switchTab('logs', this)">Lịch sử Chat</div>
+            <a href="login.php" class="menu-item logout">Đăng xuất</a>
         </div>
     </div>
 
     <div class="main-content">
         <div class="header">
             <div class="search-bar"><input type="text" placeholder="Tìm kiếm..."></div>
-            <div class="admin-profile"><span>Admin UTH</span><div class="avatar">A</div></div>
+            <div class="admin-profile-container" style="position: relative;">
+                <div class="admin-profile" onclick="toggleAdminMenu()">
+                    <span><?php echo htmlspecialchars($_SESSION['ho_ten'] ?? 'Admin', ENT_QUOTES, 'UTF-8'); ?></span>
+                    <div class="avatar"><?php $n=trim($_SESSION['ho_ten']??'A'); echo htmlspecialchars(mb_strtoupper(mb_substr($n,mb_strpos($n,' ')!==false?mb_strrpos($n,' ')+1:0,1,'UTF-8'),'UTF-8'),ENT_QUOTES,'UTF-8'); ?></div>
+                </div>
+                <!-- Dropdown menu -->
+                <div id="adminMenu" style="display: none; position: absolute; top: 110%; right: 0; background: #fff; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.08); width: 180px; z-index: 1000; overflow: hidden;">
+                    <a href="javascript:void(0)" onclick="openAdminProfileModal()" style="display: block; padding: 12px 16px; color: var(--text); text-decoration: none; font-size: 14px; border-bottom: 1px solid var(--border); transition: background 0.2s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='transparent'">Trang cá nhân</a>
+                    <a href="javascript:void(0)" onclick="openAdminSettingsModal()" style="display: block; padding: 12px 16px; color: var(--text); text-decoration: none; font-size: 14px; border-bottom: 1px solid var(--border); transition: background 0.2s;" onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='transparent'">Cài đặt</a>
+                    <a href="login.php" style="display: block; padding: 12px 16px; color: #d32f2f; text-decoration: none; font-size: 14px; font-weight: 600; transition: background 0.2s;" onmouseover="this.style.background='#fee2e2'" onmouseout="this.style.background='transparent'">Đăng xuất</a>
+                </div>
+            </div>
         </div>
 
         <div id="tab-dashboard" class="tab-content <?php echo $currentTab === 'dashboard' ? 'active' : ''; ?>">
@@ -267,8 +280,8 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
 <div class="modal-overlay" id="addUserModal">
     <div class="modal-box" style="width: 750px; max-height: 90vh; overflow-y: auto;">
         <div class="modal-header">
-            <h3>Cấp tài khoản Sinh viên mới</h3>
-            <span class="close-btn" onclick="closeModal('addUserModal')">✖</span>
+            <h3 style="margin-bottom: 20px;">Cấp tài khoản mới</h3>
+            <div class="modal-close-btn" onclick="closeModal('addUserModal')">&times;</div>
         </div>
         <form method="POST" action="admin_dashboard.php">
             <input type="hidden" name="action" value="add_user">
@@ -355,8 +368,8 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
 <div class="modal-overlay" id="replyTicketModal">
     <div class="modal-box" style="width: 650px;">
         <div class="modal-header">
-            <h3>Hỗ trợ Ticket <span id="reply_ticket_id_title" style="color: var(--accent-teal);"></span></h3>
-            <span class="close-btn" onclick="closeModal('replyTicketModal')">✖</span>
+            <h3 id="reply_ticket_id_title" style="color: var(--blue);"></h3>
+            <div class="modal-close-btn" onclick="closeModal('replyTicketModal')">&times;</div>
         </div>
         
         <div style="font-size: 13px; color: gray; margin-bottom: 5px;">Lịch sử trao đổi với: <b id="reply_student_name" style="color: white;"></b></div>
@@ -389,7 +402,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
         <div class="modal-box">
             <div class="modal-header">
                 <h3 id="faqModalTitle">Thêm dữ liệu cho Bot</h3>
-                <span class="close-btn" onclick="closeModal('faqModal')">✖</span>
+                <div class="modal-close-btn" onclick="closeModal('faqModal')">&times;</div>
             </div>
             <form method="POST" action="admin_dashboard.php">
                 <input type="hidden" name="action" id="faqAction" value="add_faq">
@@ -509,10 +522,9 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
     </script>
 
     <div class="modal-overlay" id="studentDetailModal">
-    <div class="modal-box" style="width: 600px;">
-        <div class="modal-header">
-            <h3>Hồ sơ chi tiết Sinh viên</h3>
-            <span class="close-btn" onclick="closeModal('studentDetailModal')">✖</span>
+        <div class="modal-box">
+            <div class="modal-close-btn" onclick="closeModal('studentDetailModal')">&times;</div>
+            <h3 style="margin-bottom: 20px; color: var(--blue);">Thông tin chi tiết</h3>
         </div>
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
@@ -532,9 +544,69 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
             <button class="btn" onclick="closeModal('studentDetailModal')">Đóng cửa sổ</button>
         </div>
     </div>
+<!-- Admin Profile Modal -->
+<div id="adminProfileModal" class="modal-overlay">
+  <div class="modal-box" style="max-width: 400px; text-align: center;">
+    <div class="modal-close-btn" onclick="closeAdminProfileModal()">&times;</div>
+    <div class="avatar" style="width: 80px; height: 80px; font-size: 32px; margin: 0 auto 20px;">
+       <?php $n=trim($_SESSION['ho_ten']??'A'); echo htmlspecialchars(mb_strtoupper(mb_substr($n,mb_strpos($n,' ')!==false?mb_strrpos($n,' ')+1:0,1,'UTF-8'),'UTF-8'),ENT_QUOTES,'UTF-8'); ?>
+    </div>
+    <h3 style="margin-bottom: 5px; font-size: 20px; color: var(--text);"><?php echo htmlspecialchars($_SESSION['ho_ten'] ?? 'Admin', ENT_QUOTES, 'UTF-8'); ?></h3>
+    <p style="color: var(--muted); margin-bottom: 20px;">Vai trò: Quản trị viên hệ thống (Admin)</p>
+    <div style="background: var(--bg); padding: 15px; border-radius: 8px; text-align: left;">
+      <p style="margin-bottom: 8px; font-size: 14px;"><b>Tài khoản:</b> admin</p>
+      <p style="margin-bottom: 8px; font-size: 14px;"><b>Email:</b> admin@ut.edu.vn</p>
+      <p style="margin-bottom: 0; font-size: 14px;"><b>Trạng thái:</b> <span class="badge success" style="float: right;">Đang hoạt động</span></p>
+    </div>
+  </div>
+</div>
+
+<!-- Admin Settings Modal -->
+<div id="adminSettingsModal" class="modal-overlay">
+  <div class="modal-box" style="max-width: 450px;">
+    <div class="modal-close-btn" onclick="closeAdminSettingsModal()">&times;</div>
+    <h3 style="margin-bottom: 20px; font-size: 18px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 15px;">Cài đặt hệ thống</h3>
+    <div style="margin-bottom: 15px;">
+      <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 15px;">
+        <input type="checkbox" checked style="width: 18px; height: 18px;"> Bật thông báo qua Email khi có Ticket
+      </label>
+    </div>
+    <div style="margin-bottom: 15px;">
+      <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 15px;">
+        <input type="checkbox" checked style="width: 18px; height: 18px;"> Tự động duyệt câu hỏi FAQ mới
+      </label>
+    </div>
+    <div style="margin-bottom: 25px;">
+      <label style="display: block; margin-bottom: 8px; font-weight: 600; font-size: 14px;">Giao diện hiển thị (Sắp ra mắt)</label>
+      <select style="width: 100%; padding: 12px; border-radius: 8px; border: 1px solid var(--border); font-family: inherit; font-size: 14px;" disabled>
+        <option>Chế độ Sáng (Light mode - Mặc định)</option>
+        <option>Chế độ Tối (Dark mode)</option>
+      </select>
+    </div>
+    <button class="btn" style="width: 100%;" onclick="closeAdminSettingsModal(); alert('Đã lưu các thay đổi cài đặt thành công!');">Lưu cấu hình</button>
+  </div>
 </div>
 
 <script>
+    function openAdminProfileModal() { document.getElementById('adminProfileModal').classList.add('active'); document.getElementById('adminMenu').style.display='none'; }
+    function closeAdminProfileModal() { document.getElementById('adminProfileModal').classList.remove('active'); }
+    function openAdminSettingsModal() { document.getElementById('adminSettingsModal').classList.add('active'); document.getElementById('adminMenu').style.display='none'; }
+    function closeAdminSettingsModal() { document.getElementById('adminSettingsModal').classList.remove('active'); }
+
+    // Xử lý Dropdown menu Admin
+    function toggleAdminMenu() {
+        const menu = document.getElementById('adminMenu');
+        menu.style.display = menu.style.display === 'block' ? 'none' : 'block';
+    }
+
+    // Đóng dropdown khi click ra ngoài
+    document.addEventListener('click', function(e) {
+        const container = document.querySelector('.admin-profile-container');
+        if (container && !container.contains(e.target)) {
+            document.getElementById('adminMenu').style.display = 'none';
+        }
+    });
+
     // Hàm bóc tách dữ liệu JSON và đổ lên Modal
     function viewStudentDetail(button) {
         // Lấy dữ liệu từ thuộc tính data-info
@@ -559,10 +631,8 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
 
 <div class="modal-overlay" id="editUserModal">
     <div class="modal-box" style="width: 750px; max-height: 90vh; overflow-y: auto;">
-        <div class="modal-header">
-            <h3>Sửa thông tin Sinh viên</h3>
-            <span class="close-btn" onclick="closeModal('editUserModal')">✖</span>
-        </div>
+        <h3 style="margin-bottom: 20px;">Chỉnh sửa thông tin Sinh viên</h3>
+        <div class="modal-close-btn" onclick="closeModal('editUserModal')">&times;</div>
         <form method="POST" action="admin_dashboard.php">
             <input type="hidden" name="action" value="edit_user">
             <input type="hidden" name="mssv" id="edit_mssv_hidden"> 
