@@ -1,16 +1,38 @@
 // ==========================================
 // 1. QUẢN LÝ LỊCH SỬ TRÒ CHUYỆN (SESSIONS)
 // ==========================================
-let chatSessions = JSON.parse(localStorage.getItem('uth_chat_sessions')) || [];
+const CHAT_STORAGE_VERSION = '2026-07-10-navigation-fixes-v3';
+const CHAT_STORAGE_VERSION_KEY = 'uth_chat_storage_version';
+if (localStorage.getItem(CHAT_STORAGE_VERSION_KEY) !== CHAT_STORAGE_VERSION) {
+    localStorage.removeItem('uth_chat_sessions');
+    localStorage.removeItem('uth_current_session');
+    localStorage.setItem(CHAT_STORAGE_VERSION_KEY, CHAT_STORAGE_VERSION);
+}
+
+function readStoredChatSessions() {
+    try {
+        const value = JSON.parse(localStorage.getItem('uth_chat_sessions') || '[]');
+        return Array.isArray(value) ? value : [];
+    } catch (e) {
+        localStorage.removeItem('uth_chat_sessions');
+        return [];
+    }
+}
+
+let chatSessions = readStoredChatSessions();
 let currentSessionId = localStorage.getItem('uth_current_session') || null;
 const VOICE_AUTO_KEY = 'uth_chat_voice_auto';
+const TTS_API_URL = '../api/text_to_speech.php';
 let voiceAutoRead = localStorage.getItem(VOICE_AUTO_KEY) === '1';
-let activeUtterance = null;
+let activeAudio = null;
 let activeSpeechButton = null;
-let activeSpeechToken = 0;
+let speechRequestId = 0;
 
 function speechSupported() {
-    return 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+    return typeof fetch === 'function'
+        && typeof Audio !== 'undefined'
+        && typeof URL !== 'undefined'
+        && typeof URL.createObjectURL === 'function';
 }
 
 function setSpeechButtonState(button, isReading) {
@@ -21,14 +43,15 @@ function setSpeechButtonState(button, isReading) {
 }
 
 function stopSpeech() {
-    activeSpeechToken++;
-    if (speechSupported()) {
-        window.speechSynthesis.cancel();
+    speechRequestId += 1;
+    if (activeAudio) {
+        activeAudio.pause();
+        activeAudio.currentTime = 0;
     }
     if (activeSpeechButton) {
         setSpeechButtonState(activeSpeechButton, false);
     }
-    activeUtterance = null;
+    activeAudio = null;
     activeSpeechButton = null;
 }
 
@@ -38,124 +61,118 @@ function cleanSpeechText(value) {
     tmp.querySelectorAll('script,style').forEach(el => el.remove());
     return (tmp.innerText || tmp.textContent || '')
         .replace(/\s+/g, ' ')
-        .replace(/\s+([.,:;!?])/g, '$1')
         .trim();
 }
 
-function normalizeVoiceName(value) {
-    return String(value || '')
-        .normalize('NFD')
-        .replace(/[\u0300-\u036f]/g, '')
-        .toLowerCase();
-}
-
-function voiceScore(voice) {
-    const name = normalizeVoiceName(voice.name);
-    const lang = normalizeVoiceName(voice.lang);
-    let score = 0;
-
-    if (lang === 'vi-vn') score += 120;
-    else if (lang.startsWith('vi')) score += 95;
-
-    if (name.includes('google') && (lang.startsWith('vi') || name.includes('tieng viet') || name.includes('vietnam'))) score += 200;
-    else if (name.includes('google')) score += 35;
-
-    if (name.includes('tieng viet') || name.includes('vietnam') || name.includes('vietnamese')) score += 45;
-    if (/(female|nu|linh|hoaimy|hoai my|mai|an|trang|my|vy)/i.test(name)) score += 20;
-    if (voice.default) score += 5;
-
-    return score;
-}
-
-function preferredVietnameseVoice() {
-    if (!speechSupported()) return null;
-    const voices = window.speechSynthesis.getVoices();
-    return voices
-        .map(voice => ({ voice, score: voiceScore(voice) }))
-        .filter(item => item.score > 0)
-        .sort((a, b) => b.score - a.score)[0]?.voice || null;
-}
-
-function speechChunks(text) {
-    const maxLen = 180;
-    const parts = String(text || '')
-        .split(/(?<=[.!?。！？])\s+|\n+/u)
-        .map(part => part.trim())
-        .filter(Boolean);
-    const chunks = [];
-
-    parts.forEach(part => {
-        if (part.length <= maxLen) {
-            chunks.push(part);
-            return;
+async function readSpeechError(response) {
+    try {
+        const contentType = response.headers.get('Content-Type') || '';
+        if (contentType.includes('application/json')) {
+            const data = await response.json();
+            return data.message || data.detail || "Không tạo được giọng nói.";
         }
-        let current = '';
-        part.split(/([,;:，；：]\s*)/u).forEach(piece => {
-            if (!piece) return;
-            if ((current + piece).length > maxLen && current.trim()) {
-                chunks.push(current.trim());
-                current = piece;
-            } else {
-                current += piece;
-            }
-        });
-        if (current.trim()) chunks.push(current.trim());
-    });
-
-    return chunks.length ? chunks : [text];
-}
-
-function speakNextChunk(chunks, voice, button, token, index = 0) {
-    if (token !== activeSpeechToken || index >= chunks.length) {
-        setSpeechButtonState(button, false);
-        if (token === activeSpeechToken) {
-            activeUtterance = null;
-            activeSpeechButton = null;
-        }
-        return;
+        const text = await response.text();
+        return text || "Không tạo được giọng nói.";
+    } catch (e) {
+        return "Không tạo được giọng nói.";
     }
-
-    const utterance = new SpeechSynthesisUtterance(chunks[index]);
-    utterance.lang = 'vi-VN';
-    utterance.rate = 0.94;
-    utterance.pitch = 1.04;
-    utterance.volume = 1;
-    if (voice) utterance.voice = voice;
-
-    activeUtterance = utterance;
-    activeSpeechButton = button;
-    setSpeechButtonState(button, true);
-
-    utterance.onend = () => speakNextChunk(chunks, voice, button, token, index + 1);
-    utterance.onerror = () => {
-        setSpeechButtonState(button, false);
-        if (token === activeSpeechToken) {
-            activeUtterance = null;
-            activeSpeechButton = null;
-        }
-    };
-
-    window.speechSynthesis.speak(utterance);
 }
 
-function speakText(text, button = null) {
-    if (!speechSupported()) {
-        alert("Trình duyệt hiện chưa hỗ trợ đọc giọng nói.");
-        return;
-    }
-
+async function speakText(text, button = null) {
     const clean = cleanSpeechText(text);
     if (!clean) return;
+    if (!speechSupported()) {
+        alert("Trình duyệt chưa hỗ trợ phát giọng nói.");
+        return;
+    }
 
-    if (activeSpeechButton === button && activeUtterance) {
+    // Nếu đang phát chính đoạn audio của nút này thì dừng lại
+    if (activeSpeechButton === button && activeAudio) {
         stopSpeech();
         return;
     }
 
+    // Dừng âm thanh cũ (nếu có)
     stopSpeech();
-    const token = activeSpeechToken;
-    const voice = preferredVietnameseVoice();
-    speakNextChunk(speechChunks(clean), voice, button, token, 0);
+    const requestId = ++speechRequestId;
+
+    // Hiển thị trạng thái đang đọc
+    if (button) {
+        setSpeechButtonState(button, true);
+        activeSpeechButton = button;
+    }
+
+    try {
+        const response = await fetch(TTS_API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: clean })
+        });
+
+        if (!response.ok) {
+            throw new Error(await readSpeechError(response));
+        }
+
+        const blob = await response.blob();
+        if (requestId !== speechRequestId || (button && activeSpeechButton !== button)) return;
+        if (!blob.size) throw new Error("File giọng nói rỗng.");
+
+        const audioUrl = URL.createObjectURL(blob);
+        activeAudio = new Audio(audioUrl);
+
+        const resetSpeechState = () => {
+            if (activeSpeechButton === button) {
+                setSpeechButtonState(button, false);
+                activeSpeechButton = null;
+                activeAudio = null;
+            }
+            URL.revokeObjectURL(audioUrl);
+        };
+
+        // Reset nút khi phát xong
+        activeAudio.onended = resetSpeechState;
+
+        activeAudio.onerror = () => {
+            console.error("Lỗi khi phát audio.");
+            resetSpeechState();
+        };
+
+        await activeAudio.play().catch(e => {
+            console.error("Lỗi phát giọng nói:", e);
+            resetSpeechState();
+        });
+    } catch (error) {
+        console.error("Lỗi gọi API TTS (Python), chuyển sang trình đọc mặc định của trình duyệt:", error);
+        
+        // Fallback to native browser TTS
+        if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(clean);
+            utterance.lang = 'vi-VN';
+            
+            utterance.onend = () => {
+                if (activeSpeechButton === button) {
+                    setSpeechButtonState(button, false);
+                    activeSpeechButton = null;
+                }
+            };
+            
+            utterance.onerror = (e) => {
+                console.error("Lỗi TTS mặc định:", e);
+                if (activeSpeechButton === button) {
+                    setSpeechButtonState(button, false);
+                    activeSpeechButton = null;
+                }
+            };
+            
+            window.speechSynthesis.speak(utterance);
+        } else {
+            if (requestId === speechRequestId && activeSpeechButton === button) {
+                setSpeechButtonState(button, false);
+                activeSpeechButton = null;
+            }
+            alert(error.message || "Không thể tải giọng nói lúc này.");
+        }
+    }
 }
 
 function updateVoiceToggleButton() {
@@ -163,22 +180,17 @@ function updateVoiceToggleButton() {
     if (!btn) return;
 
     const supported = speechSupported();
-    const voice = preferredVietnameseVoice();
-    const voiceLabel = voice ? ` • ${voice.name}` : '';
     btn.disabled = !supported;
     btn.classList.toggle('unsupported', !supported);
-    btn.classList.toggle('active', supported && voiceAutoRead);
-    btn.setAttribute('aria-pressed', supported && voiceAutoRead ? 'true' : 'false');
+    btn.classList.toggle('active', voiceAutoRead);
+    btn.setAttribute('aria-pressed', voiceAutoRead ? 'true' : 'false');
     btn.title = supported
-        ? (voiceAutoRead ? `Tự đọc câu trả lời: bật${voiceLabel}` : `Tự đọc câu trả lời: tắt${voiceLabel}`)
-        : "Trình duyệt chưa hỗ trợ đọc giọng nói";
+        ? (voiceAutoRead ? "Tự đọc câu trả lời: bật" : "Tự đọc câu trả lời: tắt")
+        : "Trình duyệt chưa hỗ trợ phát giọng nói";
 }
 
 function toggleVoiceMode() {
-    if (!speechSupported()) {
-        alert("Trình duyệt hiện chưa hỗ trợ đọc giọng nói.");
-        return;
-    }
+    if (!speechSupported()) return;
     voiceAutoRead = !voiceAutoRead;
     localStorage.setItem(VOICE_AUTO_KEY, voiceAutoRead ? '1' : '0');
     if (!voiceAutoRead) stopSpeech();
@@ -196,6 +208,7 @@ function startNewChat() {
     currentSessionId = "SS-" + Date.now();
     chatSessions.unshift({
         id: currentSessionId,
+        dbSessionUuid: null,
         title: "Trò chuyện mới",
         messages: [],
         date: new Date().toLocaleString('vi-VN')
@@ -207,7 +220,7 @@ function startNewChat() {
     let name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
     document.getElementById("chatBody").innerHTML = `
       <div class="chat-msg bot">
-        Chào ${name}! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
+        Chào ${escapeHTML(name)}! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
       </div>
       <div class="chat-suggestions" id="chatSuggestions">
         <button class="suggestion-chip" onclick="sendQuickMessage('Cho tôi xem kết quả học tập')">Xem điểm</button>
@@ -231,7 +244,7 @@ function loadChatSession(id) {
     const body = document.getElementById("chatBody");
     body.innerHTML = '';
     session.messages.forEach(msg => {
-        appendMessage(msg.content, msg.role, null, false); // false = đừng lưu đè
+        appendMessage(msg.content, msg.role, null, false, { messageId: msg.messageId || null }); // false = đừng lưu đè
     });
 
     // Nếu không có tin nhắn nào thì hiện lời chào
@@ -239,7 +252,7 @@ function loadChatSession(id) {
         let name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
         body.innerHTML = `
           <div class="chat-msg bot">
-            Chào ${name}! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
+            Chào ${escapeHTML(name)}! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
           </div>
         `;
     }
@@ -250,11 +263,12 @@ function loadChatSession(id) {
     body.scrollTop = body.scrollHeight;
 }
 
-function saveMessageToHistory(role, content) {
+function saveMessageToHistory(role, content, meta = {}) {
     if (!currentSessionId) {
         currentSessionId = "SS-" + Date.now();
         chatSessions.unshift({
             id: currentSessionId,
+            dbSessionUuid: null,
             title: content.substring(0, 30) + "...", // Lấy tin đầu tiên làm title
             messages: [],
             date: new Date().toLocaleString('vi-VN')
@@ -266,7 +280,7 @@ function saveMessageToHistory(role, content) {
         if(session.messages.length === 0 && role === 'user') {
              session.title = content.substring(0, 30) + "..."; // Cập nhật title
         }
-        session.messages.push({ role, content });
+        session.messages.push({ role, content, messageId: meta.messageId || null });
         saveSessions();
         renderHistoryList();
     }
@@ -287,12 +301,16 @@ function renderHistoryList() {
         div.className = 'history-item';
         div.onclick = () => loadChatSession(session.id);
 
-        div.innerHTML = `
-            <div>
-                <div class="history-title">${session.title}</div>
-                <div class="history-date">${session.date}</div>
-            </div>
-        `;
+        const textWrap = document.createElement('div');
+        const title = document.createElement('div');
+        title.className = 'history-title';
+        title.textContent = session.title || 'Trò chuyện';
+        const date = document.createElement('div');
+        date.className = 'history-date';
+        date.textContent = session.date || '';
+        textWrap.appendChild(title);
+        textWrap.appendChild(date);
+        div.appendChild(textWrap);
         list.appendChild(div);
     });
 }
@@ -333,11 +351,13 @@ async function sendMessage() {
 
     try {
         const ctx = window.UTH_CONTEXT || {};
-        const response = await fetch('api_chatbot.php', {
+        let dbSessionUuid = session ? (session.dbSessionUuid || null) : null;
+        const response = await fetch('../api/chatbot.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 message: text,
+                sessionUuid: dbSessionUuid,
                 history: apiHistory.map(m => ({role: m.role==='user'?'user':'model', text: m.content})),
                 studentName: ctx.studentName || "",
                 studentFirstName: ctx.studentFirstName || "",
@@ -359,6 +379,12 @@ async function sendMessage() {
         const data = await response.json();
         let botReply = data.reply || "Mình chưa nhận được nội dung trả lời từ hệ thống.";
         let suggestions = Array.isArray(data.suggestions) ? data.suggestions : [];
+        session = chatSessions.find(s => s.id === currentSessionId);
+        if (session && data.sessionUuid) {
+            session.dbSessionUuid = data.sessionUuid;
+            saveSessions();
+        }
+        const botMeta = { messageId: data.messageId || null };
 
         let typingElement = document.getElementById(typingId);
         if(typingElement) typingElement.remove();
@@ -366,10 +392,10 @@ async function sendMessage() {
         // 4. BỘ LỌC TICKET
         if (botReply.includes("TICKET_TRIGGER:")) {
             let cleanReply = botReply.replace("TICKET_TRIGGER:", "").trim();
-            appendMessage(cleanReply, 'bot', null, true);
+            appendMessage(cleanReply, 'bot', null, true, botMeta);
             saveMockTicket(text);
         } else {
-            appendMessage(botReply, 'bot', null, true);
+            appendMessage(botReply, 'bot', null, true, botMeta);
         }
         renderBotSuggestions(suggestions);
 
@@ -410,7 +436,7 @@ function renderBotSuggestions(suggestions) {
     body.scrollTop = body.scrollHeight;
 }
 
-function appendMessage(msg, sender, id = null, save = false) {
+function appendMessage(msg, sender, id = null, save = false, meta = {}) {
     var body = document.getElementById("chatBody");
     var div = document.createElement("div");
     div.className = "chat-msg " + sender;
@@ -432,6 +458,7 @@ function appendMessage(msg, sender, id = null, save = false) {
         actionsRow.className = "bot-msg-actions-row";
 
         let q = lastUserMessage || "N/A";
+        let messageId = meta.messageId || null;
 
         // Speak btn
         let speakBtn = document.createElement("button");
@@ -459,14 +486,21 @@ function appendMessage(msg, sender, id = null, save = false) {
         goodBtn.className = "bot-action-icon";
         goodBtn.title = "Hữu ích";
         goodBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>`;
-        goodBtn.onclick = function() { this.style.color = "#007976"; this.disabled = true; };
+        goodBtn.onclick = function() {
+            this.style.color = "#007976";
+            this.disabled = true;
+            sendFeedback(messageId, 'up', 'helpful');
+        };
 
         // Bad/Report btn
         let badBtn = document.createElement("button");
         badBtn.className = "bot-action-icon";
         badBtn.title = "Chưa chính xác";
         badBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>`;
-        badBtn.onclick = function() { reportBotMessage(this, q, msg, true); };
+        badBtn.onclick = function() {
+            sendFeedback(messageId, 'down', 'incorrect');
+            reportBotMessage(this, q, msg, true, messageId);
+        };
 
         // More menu
         let menuContainer = document.createElement("div");
@@ -483,13 +517,16 @@ function appendMessage(msg, sender, id = null, save = false) {
         let reportItem = document.createElement("div");
         reportItem.className = "dropdown-item";
         reportItem.innerHTML = "Báo cáo câu trả lời sai";
-        reportItem.onclick = function() { reportBotMessage(this, q, msg); };
+        reportItem.onclick = function() {
+            sendFeedback(messageId, 'down', 'incorrect');
+            reportBotMessage(this, q, msg, false, messageId);
+        };
         dropdown.appendChild(reportItem);
 
         let infoItem = document.createElement("div");
         infoItem.className = "dropdown-item";
         infoItem.innerHTML = "Về câu trả lời này";
-        infoItem.onclick = function() { alert("Câu trả lời được tự động sinh ra bởi AI ChatBot UTH.\nDữ liệu được cung cấp độc quyền từ hệ thống UTH Portal."); };
+        infoItem.onclick = function() { alert("Câu trả lời được tự động sinh ra bởi AI ChatBot UTH.\nNếu bạn bấm nghe, giọng đọc là giọng AI được tạo tự động, không phải người thật.\nDữ liệu được cung cấp độc quyền từ hệ thống UTH Portal."); };
         dropdown.appendChild(infoItem);
 
         moreBtn.onclick = function(e) {
@@ -521,11 +558,24 @@ function appendMessage(msg, sender, id = null, save = false) {
     body.scrollTop = body.scrollHeight;
 
     if (save) {
-        saveMessageToHistory(sender, msg);
+        saveMessageToHistory(sender, msg, meta);
     }
 }
 
-async function reportBotMessage(item, question, answer, isIcon = false) {
+async function sendFeedback(messageId, rating, reasonCode) {
+    if (!messageId) return;
+    try {
+        await fetch('../api/chat_feedback.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ messageId, rating, reasonCode })
+        });
+    } catch (e) {
+        console.error("Lỗi lưu đánh giá", e);
+    }
+}
+
+async function reportBotMessage(item, question, answer, isIcon = false, messageId = null) {
     if (isIcon) {
         item.disabled = true;
         item.style.color = "#d9534f";
@@ -536,12 +586,13 @@ async function reportBotMessage(item, question, answer, isIcon = false) {
     }
 
     try {
-        await fetch('api_report_bot.php', {
+        await fetch('../api/report_bot.php', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 question: question,
                 answer: answer,
+                messageId: messageId,
                 studentName: window.UTH_CONTEXT ? window.UTH_CONTEXT.studentName : "",
                 mssv: window.UTH_CONTEXT ? window.UTH_CONTEXT.mssv : ""
             })
@@ -592,9 +643,6 @@ document.addEventListener("DOMContentLoaded", () => {
     if(closeBtn) closeBtn.onclick = toggleChatWindow;
 
     updateVoiceToggleButton();
-    if (speechSupported()) {
-        window.speechSynthesis.onvoiceschanged = updateVoiceToggleButton;
-    }
 
     // Đóng dropdown khi click ra ngoài
     document.addEventListener("click", () => {

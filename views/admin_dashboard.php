@@ -1,92 +1,251 @@
 <?php
 session_start();
 header('Content-Type: text/html; charset=UTF-8');
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
+if (!isset($_SESSION['role']) || !in_array($_SESSION['role'], ['admin', 'staff', 'knowledge_reviewer'], true)) {
     header('Location: login.php'); exit();
 }
 // Kết nối Database dùng config tập trung
-include  __DIR__.'/config.php';
-require_once __DIR__.'/faq_helpers.php';
+include __DIR__.'/../config.php';
+require_once __DIR__.'/../core/faq_helpers.php';
 $pdo = connectDatabase($db_host, $db_port, $db_name, $db_user, $db_pass);
+appEnsureRagViewShape($pdo);
+
+function h($value): string {
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function adminTicketLabel(string $status): string {
+    return match ($status) {
+        'open' => 'Mới',
+        'in_progress' => 'Đang xử lý',
+        'waiting_student' => 'Đã phản hồi',
+        'resolved' => 'Đã xử lý',
+        'closed' => 'Đã đóng',
+        'cancelled' => 'Đã hủy',
+        default => $status,
+    };
+}
 
 // XÁC ĐỊNH TAB ĐANG HOẠT ĐỘNG (Mặc định là dashboard nếu không có tham số)
 $currentTab = $_GET['tab'] ?? 'dashboard';
 // =========================================================================
-// XỬ LÝ LỆNH TỪ GIAO DIỆN ADMIN (THÊM / SỬA / XÓA FAQ / REPLY TICKET)
+// XỬ LÝ LỆNH TỪ GIAO DIỆN ADMIN
 // =========================================================================
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
     
-    // 1. Thao tác với FAQ -> Xử lý xong giữ lại ở tab=faq
-    if ($action === 'add_faq') {
-        $stmt = $pdo->prepare("INSERT INTO faq (tu_khoa, noi_dung) VALUES (?, ?)");
-        $stmt->execute([$_POST['tu_khoa'], $_POST['noi_dung']]);
+    if ($action === 'add_source') {
+        dbExecute($pdo, "
+            INSERT INTO knowledge_sources (
+                source_type, title, organization, document_number, source_url,
+                issued_date, retrieved_at, is_official, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, NOW(), 1, 'active')
+        ", [
+            $_POST['source_type'] ?? 'official_web',
+            trim($_POST['source_title'] ?? ''),
+            trim($_POST['organization'] ?? 'UTH') ?: 'UTH',
+            trim($_POST['document_number'] ?? '') ?: null,
+            trim($_POST['source_url'] ?? '') ?: null,
+            appDateOrNull($_POST['issued_date'] ?? null),
+        ]);
         header("Location: admin_dashboard.php?tab=faq");
         exit;
     } 
-    // Thêm vào khối if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']))
-    // Xử lý Thêm Tài khoản Sinh viên (Đã bổ sung full thông tin)
+    elseif ($action === 'save_knowledge' || $action === 'verify_knowledge') {
+        $articleId = (int)($_POST['article_id'] ?? 0);
+        $sourceId = (int)($_POST['source_id'] ?? 0);
+        $validFrom = appDateOrNull($_POST['valid_from'] ?? null);
+        $validUntil = appDateOrNull($_POST['valid_until'] ?? null);
+        $status = $action === 'verify_knowledge' ? 'verified' : ($_POST['verification_status'] ?? 'pending');
+        if (!in_array($status, ['draft', 'pending', 'verified', 'rejected', 'expired'], true)) {
+            $status = 'pending';
+        }
+
+        dbExecute($pdo, "
+            UPDATE knowledge_articles
+            SET source_id = ?,
+                title = ?,
+                category = ?,
+                intent_code = ?,
+                keywords = ?,
+                answer_content = ?,
+                route_url = ?,
+                valid_from = ?,
+                valid_until = ?,
+                verification_status = ?,
+                confidence_level = CASE WHEN ? = 'verified' THEN 'authoritative' ELSE confidence_level END,
+                reviewed_by = CASE WHEN ? = 'verified' THEN ? ELSE reviewed_by END,
+                reviewed_at = CASE WHEN ? = 'verified' THEN NOW() ELSE reviewed_at END
+            WHERE id = ?
+        ", [
+            $sourceId > 0 ? $sourceId : null,
+            trim($_POST['title'] ?? ''),
+            trim($_POST['category'] ?? 'Học vụ') ?: 'Học vụ',
+            trim($_POST['intent_code'] ?? '') ?: null,
+            trim($_POST['keywords'] ?? '') ?: null,
+            trim($_POST['answer_content'] ?? ''),
+            trim($_POST['route_url'] ?? '') ?: null,
+            $validFrom ? $validFrom.' 00:00:00' : null,
+            $validUntil ? $validUntil.' 23:59:59' : null,
+            $status,
+            $status,
+            $status,
+            (int)$_SESSION['user_id'],
+            $status,
+            $articleId,
+        ]);
+
+        dbExecute($pdo, "
+            INSERT INTO knowledge_chunks (article_id, chunk_index, heading, chunk_text, token_count, content_hash)
+            VALUES (?, 0, ?, ?, ?, SHA2(?, 256))
+            ON DUPLICATE KEY UPDATE
+                heading = VALUES(heading),
+                chunk_text = VALUES(chunk_text),
+                token_count = VALUES(token_count),
+                content_hash = VALUES(content_hash),
+                updated_at = NOW()
+        ", [
+            $articleId,
+            trim($_POST['title'] ?? ''),
+            trim($_POST['answer_content'] ?? ''),
+            max(1, str_word_count(appNormalizeText($_POST['answer_content'] ?? ''))),
+            trim($_POST['answer_content'] ?? ''),
+        ]);
+
+        header("Location: admin_dashboard.php?tab=faq");
+        exit;
+    }
+    elseif ($action === 'add_knowledge') {
+        $sourceId = (int)($_POST['source_id'] ?? 0);
+        dbExecute($pdo, "
+            INSERT INTO knowledge_articles (
+                source_id, title, category, intent_code, keywords, answer_content, route_url,
+                valid_from, valid_until, verification_status, confidence_level, priority,
+                language_code, created_by
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'medium', 5, 'vi', ?)
+        ", [
+            $sourceId > 0 ? $sourceId : null,
+            trim($_POST['title'] ?? ''),
+            trim($_POST['category'] ?? 'Học vụ') ?: 'Học vụ',
+            trim($_POST['intent_code'] ?? '') ?: null,
+            trim($_POST['keywords'] ?? '') ?: null,
+            trim($_POST['answer_content'] ?? ''),
+            trim($_POST['route_url'] ?? '') ?: null,
+            appDateOrNull($_POST['valid_from'] ?? null) ? appDateOrNull($_POST['valid_from'] ?? null).' 00:00:00' : null,
+            appDateOrNull($_POST['valid_until'] ?? null) ? appDateOrNull($_POST['valid_until'] ?? null).' 23:59:59' : null,
+            (int)$_SESSION['user_id'],
+        ]);
+        $articleId = (int)$pdo->lastInsertId();
+        dbExecute($pdo, "
+            INSERT INTO knowledge_chunks (article_id, chunk_index, heading, chunk_text, token_count, content_hash)
+            VALUES (?, 0, ?, ?, ?, SHA2(?, 256))
+        ", [
+            $articleId,
+            trim($_POST['title'] ?? ''),
+            trim($_POST['answer_content'] ?? ''),
+            max(1, str_word_count(appNormalizeText($_POST['answer_content'] ?? ''))),
+            trim($_POST['answer_content'] ?? ''),
+        ]);
+        header("Location: admin_dashboard.php?tab=faq");
+        exit;
+    }
     elseif ($action === 'add_user') {
-        $stmt = $pdo->prepare("INSERT INTO users (username, password, ho_ten, ngay_sinh, noi_sinh, nganh, khoa_hoc, gioi_tinh, bac_dao_tao, loai_hinh_dao_tao, chuyen_nganh, role) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'student')");
-        
-        $stmt->execute([
-            $_POST['mssv'],
-            $_POST['password'],
-            $_POST['ho_ten'],
-            $_POST['ngay_sinh'],
-            $_POST['noi_sinh'],
-            $_POST['nganh'],
-            $_POST['khoa_hoc'],
-            $_POST['gioi_tinh'],
-            $_POST['bac_dao_tao'],
-            $_POST['loai_hinh_dao_tao'],
-            $_POST['chuyen_nganh']
+        $roleId = appRoleId($pdo, 'student');
+        $programId = appFindOrCreateProgram(
+            $pdo,
+            $_POST['nganh'] ?? '',
+            $_POST['chuyen_nganh'] ?? '',
+            $_POST['bac_dao_tao'] ?? '',
+            $_POST['loai_hinh_dao_tao'] ?? ''
+        );
+
+        dbExecute($pdo, "
+            INSERT INTO users (username, password_hash, full_name, role_id, status, password_changed_at)
+            VALUES (?, ?, ?, ?, 'active', NOW())
+        ", [
+            trim($_POST['mssv'] ?? ''),
+            password_hash((string)($_POST['password'] ?? ''), PASSWORD_DEFAULT),
+            trim($_POST['ho_ten'] ?? ''),
+            $roleId,
+        ]);
+
+        $userId = (int)$pdo->lastInsertId();
+        dbExecute($pdo, "
+            INSERT INTO student_profiles (
+                user_id, student_code, program_id, cohort_year, date_of_birth,
+                gender, place_of_birth, academic_status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'studying')
+        ", [
+            $userId,
+            trim($_POST['mssv'] ?? ''),
+            $programId,
+            appExtractYear($_POST['khoa_hoc'] ?? ''),
+            appDateOrNull($_POST['ngay_sinh'] ?? null),
+            appGenderToDb($_POST['gioi_tinh'] ?? null),
+            trim($_POST['noi_sinh'] ?? '') ?: null,
         ]);
         
         header("Location: admin_dashboard.php?tab=users");
         exit;
     }
-    // Xử lý Cập nhật (Sửa) thông tin Sinh viên
     elseif ($action === 'edit_user') {
-        $stmt = $pdo->prepare("UPDATE users SET password=?, ho_ten=?, ngay_sinh=?, noi_sinh=?, nganh=?, khoa_hoc=?, gioi_tinh=?, bac_dao_tao=?, loai_hinh_dao_tao=?, chuyen_nganh=? WHERE username=?");
-        $stmt->execute([
-            $_POST['password'], $_POST['ho_ten'], $_POST['ngay_sinh'], $_POST['noi_sinh'],
-            $_POST['nganh'], $_POST['khoa_hoc'], $_POST['gioi_tinh'], $_POST['bac_dao_tao'],
-            $_POST['loai_hinh_dao_tao'], $_POST['chuyen_nganh'], $_POST['mssv'] // mssv là username làm điều kiện WHERE
-        ]);
+        $student = appStudentByCode($pdo, trim($_POST['mssv'] ?? ''));
+        if ($student) {
+            $programId = appFindOrCreateProgram(
+                $pdo,
+                $_POST['nganh'] ?? '',
+                $_POST['chuyen_nganh'] ?? '',
+                $_POST['bac_dao_tao'] ?? '',
+                $_POST['loai_hinh_dao_tao'] ?? ''
+            );
+            dbExecute($pdo, "UPDATE users SET full_name = ? WHERE id = ?", [
+                trim($_POST['ho_ten'] ?? ''),
+                (int)$student['user_id'],
+            ]);
+            if (trim((string)($_POST['password'] ?? '')) !== '') {
+                dbExecute($pdo, "UPDATE users SET password_hash = ?, password_changed_at = NOW() WHERE id = ?", [
+                    password_hash((string)$_POST['password'], PASSWORD_DEFAULT),
+                    (int)$student['user_id'],
+                ]);
+            }
+            dbExecute($pdo, "
+                UPDATE student_profiles
+                SET program_id = ?,
+                    cohort_year = ?,
+                    date_of_birth = ?,
+                    gender = ?,
+                    place_of_birth = ?
+                WHERE id = ?
+            ", [
+                $programId,
+                appExtractYear($_POST['khoa_hoc'] ?? ''),
+                appDateOrNull($_POST['ngay_sinh'] ?? null),
+                appGenderToDb($_POST['gioi_tinh'] ?? null),
+                trim($_POST['noi_sinh'] ?? '') ?: null,
+                (int)$student['student_id'],
+            ]);
+        }
         header("Location: admin_dashboard.php?tab=users");
         exit;
     }
-    elseif ($action === 'edit_faq') {
-        $stmt = $pdo->prepare("UPDATE faq SET tu_khoa = ?, noi_dung = ? WHERE id = ?");
-        $stmt->execute([$_POST['tu_khoa'], $_POST['noi_dung'], $_POST['faq_id']]);
-        header("Location: admin_dashboard.php?tab=faq");
-        exit;
-    } 
-    elseif ($action === 'delete_faq') {
-        $stmt = $pdo->prepare("DELETE FROM faq WHERE id = ?");
-        $stmt->execute([$_POST['faq_id']]);
-        header("Location: admin_dashboard.php?tab=faq");
-        exit;
-    }
-    // Xử lý Gửi tin nhắn Reply Ticket (Hệ thống Thread mới)
     elseif ($action === 'reply_ticket') {
-        $ticket_id = $_POST['ticket_id'];
+        $ticket_id = (int)$_POST['ticket_id'];
         $reply_content = trim($_POST['admin_reply']);
 
         if (!empty($reply_content)) {
-            // 1. Thêm tin nhắn của Admin vào lịch sử
-            $stmtMsg = $pdo->prepare("INSERT INTO ticket_messages (ticket_id, sender_role, message) VALUES (?, 'admin', ?)");
-            $stmtMsg->execute([$ticket_id, $reply_content]);
+            dbExecute($pdo, "
+                INSERT INTO ticket_messages (ticket_id, sender_user_id, sender_role, message)
+                VALUES (?, ?, 'admin', ?)
+            ", [$ticket_id, (int)$_SESSION['user_id'], $reply_content]);
 
-            // 2. Cập nhật trạng thái ticket (replied) để bên sinh viên thấy thông báo
-            $stmtUpdate = $pdo->prepare("UPDATE tickets SET status = 'replied' WHERE id = ?");
-            $stmtUpdate->execute([$ticket_id]);
+            dbExecute($pdo, "UPDATE tickets SET status = 'waiting_student' WHERE id = ? AND status <> 'closed'", [$ticket_id]);
         }
         
-        // 3. Nếu Admin tick vào ô "Đóng Ticket"
         if (isset($_POST['close_ticket']) && $_POST['close_ticket'] == '1') {
-            $pdo->prepare("UPDATE tickets SET is_closed = 1 WHERE id = ?")->execute([$ticket_id]);
+            dbExecute($pdo, "UPDATE tickets SET status = 'closed', closed_at = NOW() WHERE id = ?", [$ticket_id]);
         }
 
         header("Location: admin_dashboard.php?tab=tickets");
@@ -97,14 +256,45 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
 // =========================================================================
 // LẤY DỮ LIỆU TỪ DATABASE ĐỂ HIỂN THỊ RA WEB
 // =========================================================================
-$totalTickets = $pdo->query("SELECT COUNT(*) FROM tickets")->fetchColumn();
-$pendingTickets = $pdo->query("SELECT COUNT(*) FROM tickets WHERE status = 'pending'")->fetchColumn();
-$repliedTickets = $pdo->query("SELECT COUNT(*) FROM tickets WHERE status = 'replied'")->fetchColumn();
-$totalFaq = $pdo->query("SELECT COUNT(*) FROM faq")->fetchColumn();
+$totalTickets = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM tickets");
+$pendingTickets = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM tickets WHERE status IN ('open', 'in_progress')");
+$repliedTickets = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM tickets WHERE status IN ('waiting_student', 'resolved')");
+$totalFaq = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM knowledge_articles WHERE verification_status = 'verified' AND deleted_at IS NULL");
+$pendingKnowledgeCount = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM knowledge_articles WHERE verification_status = 'pending' AND deleted_at IS NULL");
 
-$recentTickets = $pdo->query("SELECT * FROM tickets ORDER BY created_at DESC LIMIT 10")->fetchAll(PDO::FETCH_ASSOC);
-$faqs = $pdo->query("SELECT * FROM faq ORDER BY id DESC")->fetchAll(PDO::FETCH_ASSOC); 
-$students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY created_at DESC")->fetchAll(PDO::FETCH_ASSOC);
+$recentTickets = dbFetchAll($pdo, "
+    SELECT
+        id,
+        ticket_number,
+        requester_name AS student_name,
+        requester_student_code AS mssv,
+        subject AS title,
+        description AS content,
+        status,
+        created_at,
+        closed_at
+    FROM tickets
+    ORDER BY created_at DESC
+    LIMIT 10
+");
+$knowledgeRows = dbFetchAll($pdo, "
+    SELECT
+        ka.id, ka.title, ka.category, ka.intent_code, ka.keywords, ka.answer_content,
+        ka.route_url, ka.valid_from, ka.valid_until, ka.verification_status,
+        ka.source_id, ks.title AS source_title, ks.source_url
+    FROM knowledge_articles ka
+    LEFT JOIN knowledge_sources ks ON ks.id = ka.source_id
+    WHERE ka.deleted_at IS NULL
+    ORDER BY FIELD(ka.verification_status, 'pending', 'draft', 'verified', 'rejected', 'expired'), ka.updated_at DESC
+    LIMIT 60
+");
+$knowledgeSources = dbFetchAll($pdo, "
+    SELECT id, title, source_type, source_url, document_number
+    FROM knowledge_sources
+    WHERE status = 'active'
+    ORDER BY is_official DESC, updated_at DESC, title ASC
+");
+$students = appSafeStudentList($pdo);
 ?>
 
 <!DOCTYPE html>
@@ -113,7 +303,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>UTH Admin Dashboard</title>
-    <link rel="stylesheet" href="css/admin.css">
+    <link rel="stylesheet" href="../css/admin.css">
     <style>.action-form{display:inline-block;margin:0}</style>
 </head>
 <body>
@@ -123,7 +313,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
         <div class="menu">
             <div class="menu-item <?php echo $currentTab === 'dashboard' ? 'active' : ''; ?>" onclick="switchTab('dashboard', this)">Tổng quan</div>
             <div class="menu-item <?php echo $currentTab === 'tickets' ? 'active' : ''; ?>" onclick="switchTab('tickets', this)">Hỗ trợ Tickets</div>
-            <div class="menu-item <?php echo $currentTab === 'faq' ? 'active' : ''; ?>" onclick="switchTab('faq', this)">Quản lý Bot (FAQ)</div>
+            <div class="menu-item <?php echo $currentTab === 'faq' ? 'active' : ''; ?>" onclick="switchTab('faq', this)">Kiểm duyệt tri thức</div>
             <div class="menu-item <?php echo $currentTab === 'users' ? 'active' : ''; ?>" onclick="switchTab('users', this)">Quản lý Sinh viên</div>
             <div class="menu-item <?php echo $currentTab === 'logs' ? 'active' : ''; ?>" onclick="switchTab('logs', this)">Lịch sử Chat</div>
             <a href="login.php" class="menu-item logout">Đăng xuất</a>
@@ -153,7 +343,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
                 <div class="stat-card"><div class="stat-title">Tổng số Ticket</div><div class="stat-value"><?php echo $totalTickets; ?></div></div>
                 <div class="stat-card danger"><div class="stat-title">Ticket chờ xử lý</div><div class="stat-value"><?php echo $pendingTickets; ?></div></div>
                 <div class="stat-card success"><div class="stat-title">Ticket đã phản hồi</div><div class="stat-value"><?php echo $repliedTickets; ?></div></div>
-                <div class="stat-card"><div class="stat-title">Dữ liệu đã Train</div><div class="stat-value"><?php echo $totalFaq; ?></div></div>
+                <div class="stat-card"><div class="stat-title">Tri thức đã verified</div><div class="stat-value"><?php echo $totalFaq; ?></div></div>
             </div>
             <div class="table-container">
                 <h3 style="margin-bottom: 15px;">Ticket gần đây nhất</h3>
@@ -162,10 +352,10 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
                     <tbody>
                         <?php foreach($recentTickets as $t): ?>
                         <tr>
-                            <td>#<?php echo $t['id']; ?></td>
-                            <td><?php echo htmlspecialchars($t['student_name']); ?></td>
-                            <td><?php echo htmlspecialchars($t['title']); ?></td>
-                            <td><span class="badge <?php echo $t['status']; ?>"><?php echo $t['status'] == 'pending' ? 'Chờ xử lý' : 'Đã trả lời'; ?></span></td>
+                            <td>#<?php echo (int)$t['id']; ?></td>
+                            <td><?php echo h($t['student_name']); ?></td>
+                            <td><?php echo h($t['title']); ?></td>
+                            <td><span class="badge <?php echo h($t['status']); ?>"><?php echo h(adminTicketLabel($t['status'])); ?></span></td>
                         </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -181,14 +371,17 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
                     <tbody>
                         <?php foreach($recentTickets as $t): ?>
                         <tr>
-                            <td><b>#<?php echo $t['id']; ?></b><br><span style="color:var(--text-muted); font-size:12px;"><?php echo date('d/m H:i', strtotime($t['created_at'])); ?></span></td>
-                            <td><?php echo htmlspecialchars($t['student_name']); ?><br><span style="color:var(--text-muted); font-size:12px;"><?php echo htmlspecialchars($t['mssv']); ?></span></td>
-                            <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><?php echo htmlspecialchars($t['content']); ?></td>
-                            <td><span class="badge <?php echo $t['status']; ?>"><?php echo $t['status'] == 'pending' ? 'Chờ xử lý' : 'Đã phản hồi'; ?></span></td>
+                            <td><b>#<?php echo (int)$t['id']; ?></b><br><span style="color:var(--text-muted); font-size:12px;"><?php echo date('d/m H:i', strtotime($t['created_at'])); ?></span></td>
+                            <td><?php echo h($t['student_name']); ?><br><span style="color:var(--text-muted); font-size:12px;"><?php echo h($t['mssv']); ?></span></td>
+                            <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><?php echo h($t['content']); ?></td>
+                            <td><span class="badge <?php echo h($t['status']); ?>"><?php echo h(adminTicketLabel($t['status'])); ?></span></td>
                             <td>
-                                <button class="btn <?php echo $t['status'] == 'pending' ? '' : 'btn-outline'; ?>" 
-                                        onclick="openReplyModal(<?php echo $t['id']; ?>, '<?php echo htmlspecialchars($t['student_name'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($t['content'], ENT_QUOTES); ?>')">
-                                    <?php echo $t['status'] == 'pending' ? 'Trả lời' : 'Xem lại'; ?>
+                                <button class="btn <?php echo in_array($t['status'], ['open', 'in_progress'], true) ? '' : 'btn-outline'; ?>"
+                                        data-ticket-id="<?php echo (int)$t['id']; ?>"
+                                        data-student-name="<?php echo h($t['student_name']); ?>"
+                                        data-content="<?php echo h($t['content']); ?>"
+                                        onclick="openReplyModalFromButton(this)">
+                                    <?php echo in_array($t['status'], ['open', 'in_progress'], true) ? 'Trả lời' : 'Xem lại'; ?>
                                 </button>
                             </td>
                         </tr>
@@ -200,26 +393,97 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
 
         <div id="tab-faq" class="tab-content <?php echo $currentTab === 'faq' ? 'active' : ''; ?>">
             <div class="page-title">
-                <span>Kho dữ liệu huấn luyện Bot (FAQ)</span>
-                <button class="btn" onclick="openFaqModal('add')">+ Thêm câu hỏi mới</button>
+                <span>Kiểm duyệt tri thức RAG</span>
+                <span class="badge pending"><?php echo (int)$pendingKnowledgeCount; ?> pending</span>
             </div>
+
+            <div class="table-container" style="margin-bottom: 18px;">
+                <h3 style="margin-bottom: 15px;">Thêm nguồn chính thức</h3>
+                <form method="POST" action="admin_dashboard.php?tab=faq" style="display:grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+                    <input type="hidden" name="action" value="add_source">
+                    <select name="source_type" class="faq-input" style="height:44px;">
+                        <option value="official_web">Website chính thức</option>
+                        <option value="regulation">Quy chế / văn bản</option>
+                        <option value="announcement">Thông báo</option>
+                        <option value="manual">Sổ tay / hướng dẫn</option>
+                    </select>
+                    <input type="text" name="source_title" class="faq-input" placeholder="Tên nguồn / văn bản" required>
+                    <input type="text" name="organization" class="faq-input" value="UTH" placeholder="Đơn vị ban hành">
+                    <input type="text" name="document_number" class="faq-input" placeholder="Số văn bản">
+                    <input type="url" name="source_url" class="faq-input" placeholder="URL nguồn">
+                    <input type="date" name="issued_date" class="faq-input">
+                    <div style="grid-column: 1 / -1; text-align:right;">
+                        <button class="btn" type="submit">Thêm nguồn</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="table-container" style="margin-bottom: 18px;">
+                <h3 style="margin-bottom: 15px;">Thêm tri thức mới</h3>
+                <form method="POST" action="admin_dashboard.php?tab=faq" style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;">
+                    <input type="hidden" name="action" value="add_knowledge">
+                    <select name="source_id" class="faq-input" style="height:44px;">
+                        <option value="">Chọn nguồn chính thức</option>
+                        <?php foreach ($knowledgeSources as $src): ?>
+                            <option value="<?php echo (int)$src['id']; ?>"><?php echo h($src['title']); ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                    <input type="text" name="title" class="faq-input" placeholder="Tiêu đề tri thức" required>
+                    <input type="text" name="category" class="faq-input" placeholder="Nhóm, ví dụ: Học vụ" required>
+                    <input type="text" name="intent_code" class="faq-input" placeholder="Intent, ví dụ: academic_policy">
+                    <input type="text" name="keywords" class="faq-input" placeholder="Từ khóa tìm kiếm">
+                    <input type="text" name="route_url" class="faq-input" placeholder="Link điều hướng">
+                    <input type="date" name="valid_from" class="faq-input">
+                    <input type="date" name="valid_until" class="faq-input">
+                    <textarea name="answer_content" class="faq-input" style="grid-column: 1 / -1; height: 110px;" placeholder="Nội dung đã đối chiếu nguồn chính thức" required></textarea>
+                    <div style="grid-column: 1 / -1; text-align:right;">
+                        <button class="btn" type="submit">Thêm vào pending</button>
+                    </div>
+                </form>
+            </div>
+
             <div class="table-container">
+                <h3 style="margin-bottom: 15px;">Danh sách tri thức chờ kiểm duyệt / đã duyệt</h3>
                 <table>
-                    <thead><tr><th>STT</th><th>Từ khóa nhận diện</th><th>Nội dung tài liệu (AI đọc)</th><th>Thao tác</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Trạng thái</th><th>Nội dung kiểm duyệt</th></tr></thead>
                     <tbody>
-                        <?php $stt = 1; foreach($faqs as $f): ?>
+                        <?php foreach($knowledgeRows as $row): ?>
                         <tr>
-                            <td><b>#<?php echo $stt++; ?></b></td>
-                            <td style="color: var(--accent-teal);"><?php echo htmlspecialchars($f['tu_khoa']); ?></td>
-                            <td style="max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
-                                <?php echo htmlspecialchars($f['noi_dung']); ?>
+                            <td><b>#<?php echo (int)$row['id']; ?></b></td>
+                            <td>
+                                <span class="badge <?php echo h($row['verification_status']); ?>"><?php echo h($row['verification_status']); ?></span><br>
+                                <span style="color:var(--text-muted); font-size:12px;"><?php echo h($row['source_title'] ?: 'Chưa gắn nguồn'); ?></span>
                             </td>
                             <td>
-                                <button class="btn btn-outline" onclick="openFaqModal('edit', <?php echo $f['id']; ?>, '<?php echo htmlspecialchars($f['tu_khoa'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($f['noi_dung'], ENT_QUOTES); ?>')">Sửa</button>
-                                <form method="POST" class="action-form" onsubmit="return confirm('Bạn có chắc chắn muốn xóa?');">
-                                    <input type="hidden" name="action" value="delete_faq">
-                                    <input type="hidden" name="faq_id" value="<?php echo $f['id']; ?>">
-                                    <button type="submit" class="btn-danger btn">Xóa</button>
+                                <form method="POST" action="admin_dashboard.php?tab=faq">
+                                    <input type="hidden" name="article_id" value="<?php echo (int)$row['id']; ?>">
+                                    <div style="display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px;">
+                                        <select name="source_id" class="faq-input" style="height:44px;">
+                                            <option value="">Chưa chọn nguồn</option>
+                                            <?php foreach ($knowledgeSources as $src): ?>
+                                                <option value="<?php echo (int)$src['id']; ?>" <?php echo (int)$row['source_id'] === (int)$src['id'] ? 'selected' : ''; ?>>
+                                                    <?php echo h($src['title']); ?>
+                                                </option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <input type="text" name="title" class="faq-input" value="<?php echo h($row['title']); ?>" required>
+                                        <input type="text" name="category" class="faq-input" value="<?php echo h($row['category']); ?>" required>
+                                        <input type="text" name="intent_code" class="faq-input" value="<?php echo h($row['intent_code']); ?>" placeholder="intent_code">
+                                        <input type="text" name="keywords" class="faq-input" value="<?php echo h($row['keywords']); ?>" placeholder="keywords">
+                                        <input type="text" name="route_url" class="faq-input" value="<?php echo h($row['route_url']); ?>" placeholder="route_url">
+                                        <input type="date" name="valid_from" class="faq-input" value="<?php echo h($row['valid_from'] ? substr($row['valid_from'], 0, 10) : ''); ?>">
+                                        <input type="date" name="valid_until" class="faq-input" value="<?php echo h($row['valid_until'] ? substr($row['valid_until'], 0, 10) : ''); ?>">
+                                        <select name="verification_status" class="faq-input" style="height:44px;">
+                                            <?php foreach (['draft', 'pending', 'verified', 'rejected', 'expired'] as $status): ?>
+                                                <option value="<?php echo h($status); ?>" <?php echo $row['verification_status'] === $status ? 'selected' : ''; ?>><?php echo h($status); ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <textarea name="answer_content" class="faq-input" style="grid-column: 1 / -1; height: 120px;" required><?php echo h($row['answer_content']); ?></textarea>
+                                    </div>
+                                    <div style="text-align:right; margin-top:10px;">
+                                        <button class="btn btn-outline" type="submit" name="action" value="save_knowledge">Lưu sửa</button>
+                                        <button class="btn" type="submit" name="action" value="verify_knowledge">Duyệt verified</button>
+                                    </div>
                                 </form>
                             </td>
                         </tr>
@@ -242,25 +506,25 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
                             <th>MSSV (Tài khoản)</th>
                             <th>Họ và tên</th>
                             <th>Ngành / Khóa</th>
-                            <th>Mật khẩu</th>
+                            <th>Trạng thái</th>
                             <th style="text-align: center;">Thao tác</th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php foreach($students as $sv): ?>
                         <tr>
-                            <td><b><?php echo htmlspecialchars($sv['username']); ?></b></td>
-                            <td><?php echo htmlspecialchars($sv['ho_ten']); ?></td>
-                            <td><?php echo htmlspecialchars($sv['nganh']); ?> - <?php echo htmlspecialchars($sv['khoa_hoc']); ?></td>
-                            <td style="color: var(--danger); font-family: monospace;"><?php echo htmlspecialchars($sv['password']); ?></td>
+                            <td><b><?php echo h($sv['mssv'] ?: $sv['username']); ?></b></td>
+                            <td><?php echo h($sv['ho_ten']); ?></td>
+                            <td><?php echo h($sv['nganh']); ?> - <?php echo h($sv['khoa_hoc']); ?></td>
+                            <td><span class="badge success"><?php echo h($sv['status'] ?? 'active'); ?></span></td>
                             
                             <td style="text-align: center;">
                                 <button class="btn btn-outline" style="margin-right: 5px; padding: 6px 10px;" 
-                                        data-info="<?php echo htmlspecialchars(json_encode($sv), ENT_QUOTES, 'UTF-8'); ?>" 
+                                        data-info="<?php echo h(json_encode($sv, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>" 
                                         onclick="viewStudentDetail(this)"> Chi tiết</button>
                                 
                                 <button class="btn" style="background: #ff9800; color: white; padding: 6px 10px;" 
-                                        data-info="<?php echo htmlspecialchars(json_encode($sv), ENT_QUOTES, 'UTF-8'); ?>" 
+                                        data-info="<?php echo h(json_encode($sv, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>" 
                                         onclick="openEditUserModal(this)"> Sửa</button>
                             </td>
                         </tr>
@@ -292,7 +556,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
                     <input type="text" name="mssv" class="faq-input" required>
                 </div>
                 <div>
-                    <label style="color:var(--text-muted); font-size:14px;">Mật khẩu *</label>
+                    <label style="color:var(--text-muted); font-size:14px;">Mật khẩu ban đầu *</label>
                     <input type="text" name="password" class="faq-input" value="123456" required>
                 </div>
 
@@ -398,31 +662,6 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
     </div>
 </div>
 
-    <div class="modal-overlay" id="faqModal">
-        <div class="modal-box">
-            <div class="modal-header">
-                <h3 id="faqModalTitle">Thêm dữ liệu cho Bot</h3>
-                <div class="modal-close-btn" onclick="closeModal('faqModal')">&times;</div>
-            </div>
-            <form method="POST" action="admin_dashboard.php">
-                <input type="hidden" name="action" id="faqAction" value="add_faq">
-                <input type="hidden" name="faq_id" id="faqId" value="">
-                
-                <label style="color:var(--text-muted); font-size:14px;">Từ khóa nhận diện (cách nhau bằng dấu phẩy):</label>
-                <input type="text" name="tu_khoa" id="faqTuKhoa" class="faq-input" placeholder="VD: học phí, hoc phi" required>
-                
-                <label style="color:var(--text-muted); font-size:14px;">Nội dung tài liệu (Để AI đọc và hiểu):</label>
-                <textarea name="noi_dung" id="faqNoiDung" placeholder="Nhập quy chế chuẩn xác..." required style="height: 150px;"></textarea>
-                
-                <div style="text-align: right;">
-                    <button type="button" class="btn btn-outline" style="margin-right: 10px;" onclick="closeModal('faqModal')">Hủy bỏ</button>
-                    <button type="submit" class="btn" id="faqSubmitBtn">Lưu dữ liệu</button>
-                </div>
-            </form>
-        </div>
-    </div>
-    
-
     <script>
         function switchTab(tabId, element) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -441,6 +680,14 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
         }
 
         // Hàm mở khung Chat Ticket & Kéo dữ liệu từ API
+    function openReplyModalFromButton(button) {
+        openReplyModal(
+            parseInt(button.getAttribute('data-ticket-id'), 10),
+            button.getAttribute('data-student-name') || '',
+            button.getAttribute('data-content') || ''
+        );
+    }
+
     function openReplyModal(ticket_id, student_name, original_content) {
         // Điền thông tin cơ bản
         document.getElementById('reply_ticket_id_title').innerText = '#' + ticket_id;
@@ -454,7 +701,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
         document.getElementById('replyTicketModal').classList.add('active');
 
         // Gọi API kéo lịch sử tin nhắn về
-        fetch('api_get_ticket_chat.php?id=' + ticket_id)
+        fetch('../api/get_ticket_chat.php?id=' + ticket_id)
         .then(res => res.json())
         .then(data => {
             chatBox.innerHTML = ''; // Xóa chữ Đang tải đi
@@ -500,25 +747,6 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
             chatBox.innerHTML = '<div style="color: red; text-align: center;">Lỗi tải tin nhắn! Vui lòng thử lại.</div>';
         });
     }
-
-        function openFaqModal(mode, id = '', tuKhoa = '', noiDung = '') {
-            if (mode === 'add') {
-                document.getElementById('faqModalTitle').innerText = 'Thêm dữ liệu huấn luyện mới';
-                document.getElementById('faqAction').value = 'add_faq';
-                document.getElementById('faqId').value = '';
-                document.getElementById('faqTuKhoa').value = '';
-                document.getElementById('faqNoiDung').value = '';
-                document.getElementById('faqSubmitBtn').innerText = 'Thêm dữ liệu';
-            } else if (mode === 'edit') {
-                document.getElementById('faqModalTitle').innerText = 'Chỉnh sửa dữ liệu Bot';
-                document.getElementById('faqAction').value = 'edit_faq';
-                document.getElementById('faqId').value = id;
-                document.getElementById('faqTuKhoa').value = tuKhoa;
-                document.getElementById('faqNoiDung').value = noiDung;
-                document.getElementById('faqSubmitBtn').innerText = 'Lưu thay đổi';
-            }
-            document.getElementById('faqModal').classList.add('active');
-        }
     </script>
 
     <div class="modal-overlay" id="studentDetailModal">
@@ -613,7 +841,7 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
         let student = JSON.parse(button.getAttribute('data-info'));
         
         // Gắn vào các the div
-        document.getElementById('dt_mssv').innerText = student.username || '---';
+        document.getElementById('dt_mssv').innerText = student.mssv || student.username || '---';
         document.getElementById('dt_hoten').innerText = student.ho_ten || '---';
         document.getElementById('dt_ngaysinh').innerText = student.ngay_sinh ? student.ngay_sinh : '---';
         document.getElementById('dt_noisinh').innerText = student.noi_sinh || '---';
@@ -643,8 +871,8 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
                     <input type="text" id="edit_mssv_display" class="faq-input" disabled style="background: #2c3138;">
                 </div>
                 <div>
-                    <label style="color:var(--text-muted); font-size:14px;">Mật khẩu *</label>
-                    <input type="text" name="password" id="edit_password" class="faq-input" required>
+                    <label style="color:var(--text-muted); font-size:14px;">Mật khẩu mới</label>
+                    <input type="password" name="password" id="edit_password" class="faq-input" placeholder="Để trống nếu không đổi">
                 </div>
                 <div style="grid-column: span 2;">
                     <label style="color:var(--text-muted); font-size:14px;">Họ và tên *</label>
@@ -701,9 +929,9 @@ $students = $pdo->query("SELECT * FROM users WHERE role = 'student' ORDER BY cre
     // Hàm đẩy dữ liệu vào form Sửa
     function openEditUserModal(button) {
         let student = JSON.parse(button.getAttribute('data-info'));   
-        document.getElementById('edit_mssv_hidden').value = student.username;
-        document.getElementById('edit_mssv_display').value = student.username;
-        document.getElementById('edit_password').value = student.password;
+        document.getElementById('edit_mssv_hidden').value = student.mssv || student.username;
+        document.getElementById('edit_mssv_display').value = student.mssv || student.username;
+        document.getElementById('edit_password').value = '';
         document.getElementById('edit_hoten').value = student.ho_ten;
         document.getElementById('edit_ngaysinh').value = student.ngay_sinh || '';
         document.getElementById('edit_noisinh').value = student.noi_sinh || '';

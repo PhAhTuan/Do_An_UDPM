@@ -1,0 +1,3 @@
+# MAMP hiện chưa bật mod_rewrite, nên tránh dùng RewriteEngine để không gây HTTP 500.
+Options -Indexes
+DirectoryIndex views/login.php

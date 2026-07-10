@@ -2,33 +2,76 @@
 session_start();
 header('Content-Type: text/html; charset=UTF-8');
 
-// ── Xác thực ──────────────────────────────────────────────
+// -- Xác thực ------------------------------------------------
 if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'student') {
     header('Location: login.php'); exit();
 }
 
-// ── Kết nối DB ────────────────────────────────────────────
-include  __DIR__.'/config.php';
-require_once __DIR__.'/faq_helpers.php';
+// -- Kết nối DB ---------------------------------------------
+include __DIR__.'/../config.php';
+require_once __DIR__.'/../core/faq_helpers.php';
 $pdo = connectDatabase($db_host, $db_port, $db_name, $db_user, $db_pass);
 
-// ── Mark-read ticket ──────────────────────────────────────
+function dashH($value): string {
+    return htmlspecialchars((string)$value, ENT_QUOTES, 'UTF-8');
+}
+
+function dashDayLabel($day): string {
+    return [
+        1 => 'Thứ 2',
+        2 => 'Thứ 3',
+        3 => 'Thứ 4',
+        4 => 'Thứ 5',
+        5 => 'Thứ 6',
+        6 => 'Thứ 7',
+        7 => 'Chủ nhật',
+    ][(int)$day] ?? 'Chưa cập nhật';
+}
+
+function dashDateTime($value, string $format = 'd/m/Y H:i'): string {
+    if (!$value) {
+        return 'Chưa cập nhật';
+    }
+    $time = strtotime((string)$value);
+    return $time ? date($format, $time) : 'Chưa cập nhật';
+}
+
+function dashMoney($value): string {
+    return number_format((float)$value, 0, ',', '.').' VNĐ';
+}
+
+function dashStatusLabel(?string $status): string {
+    return match ($status) {
+        'registered' => 'Đã đăng ký',
+        'studying' => 'Đang học',
+        'completed' => 'Hoàn thành',
+        'pending' => 'Chờ công bố',
+        'passed' => 'Đạt',
+        'failed' => 'Không đạt',
+        'unpaid' => 'Chưa đóng',
+        'partially_paid' => 'Đã đóng một phần',
+        'paid' => 'Đã đóng',
+        'overdue' => 'Quá hạn',
+        default => $status ?: 'Chưa cập nhật',
+    };
+}
+
+// -- Mark-read ticket ---------------------------------------
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'mark_read') {
-    $pdo->prepare("UPDATE tickets SET status='read' WHERE id=?")->execute([intval($_POST['ticket_id'])]);
+    dbExecute($pdo, "UPDATE tickets SET status='resolved', resolved_at = NOW() WHERE id = ? AND requester_student_code = ?", [
+        intval($_POST['ticket_id']),
+        $_SESSION['mssv'] ?? '',
+    ]);
     header('Location: dashboard.php'); exit;
 }
 
-// ── Lấy thông tin sinh viên từ DB ─────────────────────────
-$mssv = $_SESSION['mssv'] ?? '';
-$studentInfo = [];
-try {
-    $st = $pdo->prepare("SELECT * FROM users WHERE username = ? LIMIT 1");
-    $st->execute([$mssv]);
-    $studentInfo = $st->fetch(PDO::FETCH_ASSOC) ?: [];
-} catch (Throwable $e) {}
-
-$hoTen        = $studentInfo['ho_ten']             ?? ($_SESSION['ho_ten'] ?? 'Sinh viên');
-$_SESSION['ho_ten'] = $hoTen; // Update session cache to fix mojibake after refresh
+// -- Lấy thông tin sinh viên từ DB --------------------------
+$studentInfo = appStudentByUserId($pdo, (int)$_SESSION['user_id']) ?: [];
+$studentId    = (int)($studentInfo['student_id'] ?? 0);
+$mssv         = $studentInfo['mssv'] ?? ($_SESSION['mssv'] ?? '');
+$hoTen        = $studentInfo['ho_ten'] ?? ($_SESSION['ho_ten'] ?? 'Sinh viên');
+$_SESSION['mssv'] = $mssv;
+$_SESSION['ho_ten'] = $hoTen;
 $nameParts    = preg_split('/\s+/u', trim($hoTen));
 $tenGoi       = $nameParts ? end($nameParts) : $hoTen;
 $ngaySinh     = $studentInfo['ngay_sinh']          ?? '';
@@ -40,27 +83,57 @@ $bacDaoTao    = $studentInfo['bac_dao_tao']        ?? '';
 $loaiHinh     = $studentInfo['loai_hinh_dao_tao']  ?? '';
 $chuyenNganh  = $studentInfo['chuyen_nganh']       ?? '';
 $avatar       = $studentInfo['avatar']             ?? '';
-$avatarUrl    = !empty($avatar) ? htmlspecialchars($avatar) . '?v=' . time() : "https://ui-avatars.com/api/?name=" . urlencode($hoTen) . "&background=e3f2fd&color=007976&size=150";
+$avatarUrl    = !empty($avatar) ? (str_starts_with($avatar, 'http') ? $avatar : '../' . $avatar) . '?v=' . time() : "https://ui-avatars.com/api/?name=" . urlencode($hoTen) . "&background=e3f2fd&color=007976&size=150";
 
-// ── Hệ thống Thông báo / Sự kiện ──────────────────────────
+// -- Hệ thống Thông báo / Sự kiện ---------------------------
 $systemNotifications = [];
 try {
-    $st = $pdo->query("SELECT * FROM system_notifications ORDER BY created_at DESC LIMIT 10");
-    $systemNotifications = $st->fetchAll(PDO::FETCH_ASSOC);
+    $systemNotifications = dbFetchAll($pdo, "
+        SELECT id, title, content, type, created_at
+        FROM system_notifications
+        ORDER BY created_at DESC
+        LIMIT 10
+    ");
 } catch (Throwable $e) {}
 
-// ── Lịch học trong tuần ───────────────────────────────────
+// -- Deadline / sự kiện học vụ sắp tới ----------------------
+$upcomingDeadlines = [];
+try {
+    $upcomingDeadlines = dbFetchAll($pdo, "
+        SELECT title, description, deadline_type, starts_at, due_at, source_url, audience_type, audience_value
+        FROM academic_deadlines
+        WHERE status = 'published'
+          AND due_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+          AND (
+              audience_type = 'all'
+              OR (audience_type = 'student' AND audience_value = ?)
+              OR (audience_type = 'cohort' AND audience_value = ?)
+              OR (audience_type = 'program' AND audience_value = ?)
+          )
+        ORDER BY due_at ASC
+        LIMIT 10
+    ", [
+        $mssv,
+        (string)($studentInfo['cohort_year'] ?? ''),
+        (string)($studentInfo['program_code'] ?? ''),
+    ]);
+} catch (Throwable $e) {}
+
+// -- Lịch học trong tuần ------------------------------------
 $classSchedules = [];
 $todaySchedule = [];
 $tomorrowSchedule = [];
 try {
-    $st = $pdo->prepare("SELECT * FROM class_schedules WHERE mssv = ? ORDER BY day_of_week ASC, start_time ASC");
-    $st->execute([$mssv]);
-    $classSchedules = $st->fetchAll(PDO::FETCH_ASSOC);
+    $classSchedules = dbFetchAll($pdo, "
+        SELECT id, mssv, subject_name, room, day_of_week, start_time, end_time
+        FROM class_schedules
+        WHERE mssv = ?
+        ORDER BY day_of_week ASC, start_time ASC
+    ", [$mssv]);
 
-    // PHP 'N' trả về 1-7 (Mon-Sun). Đổi thành 2-8 để khớp với day_of_week (Thứ 2 đến Chủ nhật)
-    $todayDayOfWeek = date('N') + 1;
-    $tomorrowDayOfWeek = ($todayDayOfWeek == 8) ? 2 : ($todayDayOfWeek + 1);
+    // Schema mới: 1=Monday ... 7=Sunday.
+    $todayDayOfWeek = (int)date('N');
+    $tomorrowDayOfWeek = (int)date('N', strtotime('+1 day'));
 
     foreach ($classSchedules as $class) {
         if ($class['day_of_week'] == $todayDayOfWeek) {
@@ -71,13 +144,185 @@ try {
     }
 } catch (Throwable $e) {}
 
-// ── Thông báo ticket ──────────────────────────────────────
+// -- Lớp học phần, điểm, học phí -----------------------------
+$enrolledSections = [];
+$gradeRows = [];
+$tuitionInvoices = [];
+$currentSemesterName = 'Học kỳ hiện tại';
+$earnedCredits = 0;
+$totalCredits = max(1, (int)($studentInfo['total_credits'] ?? 120));
+
+if ($studentId > 0) {
+    try {
+        $enrolledSections = dbFetchAll($pdo, "
+            SELECT
+                e.id AS enrollment_id,
+                e.enrollment_status,
+                s.code AS subject_code,
+                s.name AS subject_name,
+                s.credits,
+                cs.section_code,
+                cs.lecturer_name,
+                cs.delivery_mode,
+                sem.name AS semester_name,
+                ay.code AS academic_year
+            FROM enrollments e
+            JOIN course_sections cs ON cs.id = e.course_section_id
+            JOIN subjects s ON s.id = cs.subject_id
+            JOIN semesters sem ON sem.id = cs.semester_id
+            JOIN academic_years ay ON ay.id = sem.academic_year_id
+            WHERE e.student_id = ?
+              AND e.enrollment_status IN ('registered', 'studying', 'completed')
+            ORDER BY sem.start_date DESC, s.name ASC
+            LIMIT 20
+        ", [$studentId]);
+
+        if (!empty($enrolledSections[0]['semester_name'])) {
+            $currentSemesterName = $enrolledSections[0]['semester_name'];
+        }
+
+        $gradeRows = dbFetchAll($pdo, "
+            SELECT
+                s.code AS subject_code,
+                s.name AS subject_name,
+                s.credits,
+                sem.name AS semester_name,
+                ay.code AS academic_year,
+                g.attendance_score,
+                g.process_score,
+                g.midterm_score,
+                g.final_exam_score,
+                g.final_score_10,
+                g.grade_4,
+                g.letter_grade,
+                g.result,
+                g.published_at
+            FROM enrollments e
+            JOIN course_sections cs ON cs.id = e.course_section_id
+            JOIN subjects s ON s.id = cs.subject_id
+            JOIN semesters sem ON sem.id = cs.semester_id
+            JOIN academic_years ay ON ay.id = sem.academic_year_id
+            JOIN grades g ON g.enrollment_id = e.id
+            WHERE e.student_id = ?
+            ORDER BY sem.start_date DESC, s.name ASC
+            LIMIT 20
+        ", [$studentId]);
+
+        $earnedCredits = (int)dbFetchValue($pdo, "
+            SELECT COALESCE(SUM(s.credits), 0)
+            FROM enrollments e
+            JOIN course_sections cs ON cs.id = e.course_section_id
+            JOIN subjects s ON s.id = cs.subject_id
+            JOIN grades g ON g.enrollment_id = e.id
+            WHERE e.student_id = ?
+              AND g.result = 'passed'
+        ", [$studentId]);
+
+        $tuitionInvoices = dbFetchAll($pdo, "
+            SELECT
+                ti.invoice_number,
+                ti.description,
+                ti.subtotal,
+                ti.discount_amount,
+                ti.paid_amount,
+                ti.outstanding_amount,
+                ti.due_date,
+                ti.status,
+                sem.name AS semester_name,
+                ay.code AS academic_year
+            FROM tuition_invoices ti
+            JOIN semesters sem ON sem.id = ti.semester_id
+            JOIN academic_years ay ON ay.id = sem.academic_year_id
+            WHERE ti.student_id = ?
+            ORDER BY ti.issued_at DESC
+            LIMIT 5
+        ", [$studentId]);
+    } catch (Throwable $e) {}
+}
+
+$progressPercent = min(100, max(0, round(($earnedCredits / $totalCredits) * 100)));
+$eventCount = count($systemNotifications) + count($upcomingDeadlines);
+$tickerText = $systemNotifications[0]['title'] ?? ($upcomingDeadlines[0]['title'] ?? 'Không có thông báo mới');
+
+// -- Dữ liệu lịch tháng --------------------------------------
+$calendarYear = (int)date('Y');
+$calendarMonth = (int)date('n');
+$calendarEvents = [];
+$addCalendarEvent = function (string $date, string $type, string $title, ?string $time = null) use (&$calendarEvents): void {
+    if ($date === '' || $title === '') {
+        return;
+    }
+    $calendarEvents[$date][] = [
+        'type' => $type,
+        'title' => $title,
+        'time' => $time,
+    ];
+};
+
+$daysInCurrentMonth = (int)date('t');
+foreach ($classSchedules as $class) {
+    $dayOfWeek = (int)($class['day_of_week'] ?? 0);
+    if ($dayOfWeek < 1 || $dayOfWeek > 7) {
+        continue;
+    }
+    for ($day = 1; $day <= $daysInCurrentMonth; $day++) {
+        $date = sprintf('%04d-%02d-%02d', $calendarYear, $calendarMonth, $day);
+        if ((int)date('N', strtotime($date)) === $dayOfWeek) {
+            $addCalendarEvent(
+                $date,
+                'schedule',
+                (string)($class['subject_name'] ?? 'Lịch học'),
+                substr((string)($class['start_time'] ?? ''), 0, 5)
+            );
+        }
+    }
+}
+foreach ($systemNotifications as $noti) {
+    $date = date('Y-m-d', strtotime((string)$noti['created_at']));
+    if ((int)date('Y', strtotime($date)) === $calendarYear && (int)date('n', strtotime($date)) === $calendarMonth) {
+        $addCalendarEvent($date, (string)($noti['type'] ?? 'news'), (string)($noti['title'] ?? 'Thông báo'));
+    }
+}
+foreach ($upcomingDeadlines as $deadline) {
+    $date = date('Y-m-d', strtotime((string)$deadline['due_at']));
+    if ((int)date('Y', strtotime($date)) === $calendarYear && (int)date('n', strtotime($date)) === $calendarMonth) {
+        $addCalendarEvent($date, 'deadline', (string)($deadline['title'] ?? 'Deadline'), date('H:i', strtotime((string)$deadline['due_at'])));
+    }
+}
+
+// -- Deadline học vụ ----------------------------------------
+$todayDeadlines = [];
+$tomorrowDeadlines = [];
+try {
+    $todayDeadlines = dbFetchAll($pdo, "
+        SELECT title, description, deadline_type, due_at, source_url
+        FROM academic_deadlines
+        WHERE status = 'published' AND DATE(due_at) = CURDATE()
+        ORDER BY due_at ASC
+    ");
+    $tomorrowDeadlines = dbFetchAll($pdo, "
+        SELECT title, description, deadline_type, due_at, source_url
+        FROM academic_deadlines
+        WHERE status = 'published' AND DATE(due_at) = DATE_ADD(CURDATE(), INTERVAL 1 DAY)
+        ORDER BY due_at ASC
+    ");
+} catch (Throwable $e) {}
+
+// -- Thông báo ticket ---------------------------------------
 $notifications = [];
 $notiCount     = 0;
 try {
-    $st = $pdo->prepare("SELECT * FROM tickets WHERE mssv=? AND status='replied' ORDER BY created_at DESC");
-    $st->execute([$mssv]);
-    $notifications = $st->fetchAll(PDO::FETCH_ASSOC);
+    $notifications = dbFetchAll($pdo, "
+        SELECT
+            id,
+            subject AS title,
+            description AS content,
+            status,
+            created_at
+        FROM tickets
+        WHERE requester_student_code = ? AND status = 'waiting_student'
+        ORDER BY updated_at DESC
+    ", [$mssv]);
     $notiCount     = count($notifications);
 } catch (Throwable $e) {}
 ?>
@@ -90,7 +335,7 @@ try {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/dashboard.css">
+  <link rel="stylesheet" href="../css/dashboard.css?v=<?php echo filemtime(__DIR__.'/../css/dashboard.css'); ?>">
 </head>
 <body>
 
@@ -130,8 +375,8 @@ try {
     <div class="user-dropdown">
       <div class="user-trigger" onclick="toggleUserMenu()" id="userTrigger">
         <!-- Default avatar image, should ideally be dynamically loaded -->
-        <img src="https://ui-avatars.com/api/?name=<?php echo urlencode($hoTen); ?>&background=007976&color=fff&rounded=true" alt="Avatar" class="u-avatar">
-        <span class="u-name"><?php echo htmlspecialchars($hoTen, ENT_QUOTES, 'UTF-8'); ?></span>
+        <img src="<?php echo dashH($avatarUrl); ?>" id="headerAvatar" alt="Avatar" class="u-avatar">
+        <span class="u-name"><?php echo dashH($hoTen); ?></span>
         <svg class="u-chevron" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
       </div>
 
@@ -142,7 +387,7 @@ try {
         <?php else: ?>
           <?php foreach ($notifications as $noti): ?>
             <a href="#" class="drop-item noti-link"
-               onclick="openStudentChat(<?php echo intval($noti['id']); ?>, '<?php echo htmlspecialchars($noti['title'] ?? '', ENT_QUOTES, 'UTF-8'); ?>', '<?php echo htmlspecialchars($noti['content'] ?? '', ENT_QUOTES, 'UTF-8'); ?>'); closeUserMenu();">
+               onclick="openStudentChat(<?php echo intval($noti['id']); ?>, <?php echo dashH(json_encode($noti['title'] ?? '', JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>, <?php echo dashH(json_encode($noti['content'] ?? '', JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)); ?>); closeUserMenu();">
               Ticket #<?php echo intval($noti['id']); ?> có phản hồi
             </a>
           <?php endforeach; ?>
@@ -170,48 +415,48 @@ try {
         <div class="sv-body">
           <div class="sv-avatar-container">
              <!-- Placeholder for avatar as in screenshot -->
-             <img src="<?php echo $avatarUrl; ?>" alt="Avatar" class="sv-img" id="mainDashboardAvatar">
+             <img src="<?php echo dashH($avatarUrl); ?>" alt="Avatar" class="sv-img" id="mainDashboardAvatar">
           </div>
           <div class="sv-details">
             <div class="sv-row">
               <span class="sv-label">MSSV:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($mssv, ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($mssv); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Khóa học:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($khoaHoc ?: '2023', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($khoaHoc ?: 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Họ tên:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($hoTen, ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($hoTen); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Giới tính:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($gioiTinh ?: 'Nam', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($gioiTinh ?: 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Ngày sinh:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($ngaySinh ? date('d/m/Y', strtotime($ngaySinh)) : '07/06/2005', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($ngaySinh ? date('d/m/Y', strtotime($ngaySinh)) : 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Bậc đào tạo:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($bacDaoTao ?: 'Đại học - chính quy', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($bacDaoTao ?: 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Nơi sinh:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($noiSinh ?: 'Đồng Tháp', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($noiSinh ?: 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row">
               <span class="sv-label">Loại hình đào tạo:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($loaiHinh ?: 'Chất lượng cao', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($loaiHinh ?: 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row" style="grid-column: 1 / -1;">
               <span class="sv-label">Ngành:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($nganh ?: 'Công nghệ thông tin', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($nganh ?: 'Chưa cập nhật'); ?></span>
             </div>
             <div class="sv-row" style="grid-column: 1 / -1; margin-top: -8px;">
               <span class="sv-label">Chuyên ngành:</span>
-              <span class="sv-val"><?php echo htmlspecialchars($chuyenNganh ?: 'Công nghệ thông tin', ENT_QUOTES, 'UTF-8'); ?></span>
+              <span class="sv-val"><?php echo dashH($chuyenNganh ?: 'Chưa cập nhật'); ?></span>
             </div>
           </div>
         </div>
@@ -223,11 +468,11 @@ try {
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <h3 class="card-title" style="margin:0;">Thông báo/ sự kiện</h3>
             <div style="display:flex; align-items:center; gap:10px; max-width: 50%;">
-              <marquee scrollamount="4" style="color:#d32f2f; font-size:13px; font-weight:500;">Chương trình truyền thông</marquee>
+              <marquee scrollamount="4" style="color:#d32f2f; font-size:13px; font-weight:500;"><?php echo dashH($tickerText); ?></marquee>
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="#d32f2f"><path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2zm-2 1H8v-6c0-2.48 1.51-4.5 4-4.5s4 2.02 4 4.5v6z"/></svg>
             </div>
           </div>
-          <div class="event-number"><?php echo count($systemNotifications); ?></div>
+          <div class="event-number"><?php echo $eventCount; ?></div>
           <a href="javascript:void(0)" onclick="openSystemNotificationsModal()" class="event-link">Xem chi tiết</a>
         </div>
 
@@ -250,9 +495,9 @@ try {
         <div class="cal-header">
           <h3 class="cal-title">Lịch theo tháng</h3>
           <div class="cal-nav-container">
-            <button class="cal-nav">‹</button>
-            <div class="cal-month">tháng 7 2026 <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></div>
-            <button class="cal-nav">›</button>
+            <button class="cal-nav" type="button" id="calPrevBtn">‹</button>
+            <div class="cal-month"><span id="calMonthLabel"></span> <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg></div>
+            <button class="cal-nav" type="button" id="calNextBtn">›</button>
           </div>
         </div>
 
@@ -324,16 +569,40 @@ try {
 
   <!-- Bottom Details Row -->
   <div class="details-row">
-    <!-- Kết quả học tập (Empty State) -->
+    <!-- Kết quả học tập -->
     <div class="card details-card">
       <div class="details-header">
         <h3 class="card-title">Kết quả học tập</h3>
-        <select class="details-select"><option>Học kỳ hè năm học 2025-2026</option></select>
+        <select class="details-select"><option><?php echo dashH($currentSemesterName); ?></option></select>
       </div>
-      <div class="details-empty">
-        <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="#e8eaf6"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>
-        <p>Không có dữ liệu cho học kỳ này!</p>
-      </div>
+      <?php if (empty($gradeRows)): ?>
+        <div class="details-empty">
+          <svg xmlns="http://www.w3.org/2000/svg" width="80" height="80" viewBox="0 0 24 24" fill="#e8eaf6"><path d="M20 6h-8l-2-2H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2z"/></svg>
+          <p>Chưa có điểm được công bố cho học kỳ này.</p>
+        </div>
+      <?php else: ?>
+        <table class="details-table compact-table">
+          <thead>
+            <tr>
+              <th style="text-align:left;">Môn học</th>
+              <th>Điểm</th>
+              <th>Chữ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach (array_slice($gradeRows, 0, 5) as $grade): ?>
+              <tr>
+                <td>
+                  <strong><?php echo dashH($grade['subject_name']); ?></strong>
+                  <span class="muted-line"><?php echo dashH($grade['subject_code']); ?> · <?php echo (int)$grade['credits']; ?> tín chỉ</span>
+                </td>
+                <td style="text-align:center;"><?php echo $grade['final_score_10'] !== null ? dashH($grade['final_score_10']) : 'Chưa có'; ?></td>
+                <td style="text-align:center;"><?php echo dashH($grade['letter_grade'] ?: dashStatusLabel($grade['result'] ?? null)); ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
     </div>
 
     <!-- Tiến độ học tập -->
@@ -347,10 +616,13 @@ try {
           <path class="circle-bg" fill="none" stroke="#e0e0e0" stroke-width="3.8"
             d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
           <path class="circle" fill="none" stroke="#10b981" stroke-width="3.8" stroke-linecap="round"
-            stroke-dasharray="60, 100"
+            stroke-dasharray="<?php echo $progressPercent; ?>, 100"
             d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
         </svg>
-        <div class="progress-text">Đã đạt: 70/120</div>
+        <div class="progress-text">
+          Đã đạt: <?php echo $earnedCredits; ?>/<?php echo $totalCredits; ?>
+          <span><?php echo $progressPercent; ?>%</span>
+        </div>
       </div>
     </div>
 
@@ -358,34 +630,33 @@ try {
     <div class="card details-card">
       <div class="details-header" style="flex-direction: row; gap: 10px;">
         <h3 class="card-title">Lớp học phần</h3>
-        <select class="details-select"><option>Học kỳ hè năm học 2025-2026</option></select>
+        <select class="details-select"><option><?php echo dashH($currentSemesterName); ?></option></select>
       </div>
-      <table class="details-table">
-        <thead>
-          <tr>
-            <th style="text-align: left;">Môn học</th>
-            <th style="text-align: right;">Tín chỉ</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>Lập trình thiết bị di động</td>
-            <td style="text-align: right;">3</td>
-          </tr>
-          <tr>
-            <td>Thương mại điện tử</td>
-            <td style="text-align: right;">3</td>
-          </tr>
-          <tr>
-            <td>Lập trình mạng</td>
-            <td style="text-align: right;">3</td>
-          </tr>
-          <tr>
-            <td>Lịch sử Đảng cộng sản Việt Nam</td>
-            <td style="text-align: right;">2</td>
-          </tr>
-        </tbody>
-      </table>
+      <?php if (empty($enrolledSections)): ?>
+        <div class="details-empty">
+          <p>Chưa có lớp học phần trong học kỳ hiện tại.</p>
+        </div>
+      <?php else: ?>
+        <table class="details-table compact-table">
+          <thead>
+            <tr>
+              <th style="text-align: left;">Môn học</th>
+              <th style="text-align: right;">Tín chỉ</th>
+            </tr>
+          </thead>
+          <tbody>
+            <?php foreach (array_slice($enrolledSections, 0, 6) as $section): ?>
+              <tr>
+                <td>
+                  <strong><?php echo dashH($section['subject_name']); ?></strong>
+                  <span class="muted-line"><?php echo dashH($section['section_code']); ?> · <?php echo dashH($section['lecturer_name'] ?: 'Chưa cập nhật GV'); ?></span>
+                </td>
+                <td style="text-align: right;"><?php echo (int)$section['credits']; ?></td>
+              </tr>
+            <?php endforeach; ?>
+          </tbody>
+        </table>
+      <?php endif; ?>
     </div>
   </div>
 
@@ -415,7 +686,7 @@ try {
         <!-- Left: Photo & Upload -->
         <div style="width: 140px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; margin: 0 auto;">
           <div style="position: relative; width: 140px; height: 180px; border-radius: 8px; border: 3px solid #007976; overflow: hidden; background: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
-            <img src="<?php echo $avatarUrl; ?>" id="modalAvatarPreview" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;">
+            <img src="<?php echo dashH($avatarUrl); ?>" id="modalAvatarPreview" alt="Avatar" style="width: 100%; height: 100%; object-fit: cover;">
 
             <label for="avatarUploadInput" style="position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,121,118,0.85); color: #fff; padding: 8px 0; text-align: center; font-size: 13px; font-weight: 500; cursor: pointer; backdrop-filter: blur(4px); transition: background 0.2s;" onmouseover="this.style.background='rgba(0,121,118,1)'" onmouseout="this.style.background='rgba(0,121,118,0.85)'">
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: text-bottom; margin-right: 4px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg> Đổi ảnh
@@ -424,36 +695,36 @@ try {
           </div>
           <!-- Barcode dummy -->
           <div style="margin-top: 15px; width: 100%; height: 40px; background: repeating-linear-gradient(90deg, #333, #333 2px, transparent 2px, transparent 4px, #333 4px, #333 5px, transparent 5px, transparent 8px, #333 8px, #333 12px, transparent 12px, transparent 15px); opacity: 0.7;"></div>
-          <div style="font-size: 11px; letter-spacing: 2px; color: #555; margin-top: 5px;"><?php echo htmlspecialchars($mssv, ENT_QUOTES, 'UTF-8'); ?></div>
+          <div style="font-size: 11px; letter-spacing: 2px; color: #555; margin-top: 5px;"><?php echo dashH($mssv); ?></div>
         </div>
 
         <!-- Right: Details -->
         <div style="flex: 1; min-width: 250px; padding-top: 10px;">
-          <h4 style="color: #007976; font-size: 24px; margin-bottom: 20px; font-weight: 700; text-transform: uppercase;"><?php echo htmlspecialchars($hoTen, ENT_QUOTES, 'UTF-8'); ?></h4>
+          <h4 style="color: #007976; font-size: 24px; margin-bottom: 20px; font-weight: 700; text-transform: uppercase;"><?php echo dashH($hoTen); ?></h4>
 
           <div style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; font-size: 15px; color: #333; margin-bottom: 12px;">
             <div style="font-weight: 600; color: #666;">MSSV:</div>
-            <div style="font-weight: 700; color: #007976;"><?php echo htmlspecialchars($mssv, ENT_QUOTES, 'UTF-8'); ?></div>
+            <div style="font-weight: 700; color: #007976;"><?php echo dashH($mssv); ?></div>
           </div>
 
           <div style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; font-size: 15px; color: #333; margin-bottom: 12px;">
             <div style="font-weight: 600; color: #666;">Ngày sinh:</div>
-            <div><?php echo htmlspecialchars($ngaySinh ? date('d/m/Y', strtotime($ngaySinh)) : '07/06/2005', ENT_QUOTES, 'UTF-8'); ?></div>
+            <div><?php echo dashH($ngaySinh ? date('d/m/Y', strtotime($ngaySinh)) : 'Chưa cập nhật'); ?></div>
           </div>
 
           <div style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; font-size: 15px; color: #333; margin-bottom: 12px;">
             <div style="font-weight: 600; color: #666;">Khóa học:</div>
-            <div><?php echo htmlspecialchars($khoaHoc ?: '2023', ENT_QUOTES, 'UTF-8'); ?></div>
+            <div><?php echo dashH($khoaHoc ?: 'Chưa cập nhật'); ?></div>
           </div>
 
           <div style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; font-size: 15px; color: #333; margin-bottom: 12px;">
             <div style="font-weight: 600; color: #666;">Bậc đào tạo:</div>
-            <div><?php echo htmlspecialchars($bacDaoTao ?: 'Đại học - chính quy', ENT_QUOTES, 'UTF-8'); ?></div>
+            <div><?php echo dashH($bacDaoTao ?: 'Chưa cập nhật'); ?></div>
           </div>
 
           <div style="display: grid; grid-template-columns: 100px 1fr; gap: 10px; font-size: 15px; color: #333; margin-bottom: 12px;">
             <div style="font-weight: 600; color: #666;">Ngành:</div>
-            <div style="font-weight: 600;"><?php echo htmlspecialchars($nganh ?: 'Công nghệ thông tin', ENT_QUOTES, 'UTF-8'); ?></div>
+            <div style="font-weight: 600;"><?php echo dashH($nganh ?: 'Chưa cập nhật'); ?></div>
           </div>
 
         </div>
@@ -488,16 +759,19 @@ function uploadAvatar() {
   const originalText = label.innerHTML;
   label.innerHTML = 'Đang tải...';
 
-  fetch('api_upload_avatar.php', {
+  fetch('../api/upload_avatar.php', {
     method: 'POST',
     body: formData
   })
   .then(res => res.json())
   .then(data => {
     if (data.success) {
-      const newUrl = data.avatar_url + '?v=' + new Date().getTime();
+      const newUrl = (data.avatar_url.startsWith('http') ? data.avatar_url : '../' + data.avatar_url) + '?v=' + new Date().getTime();
       document.getElementById('mainDashboardAvatar').src = newUrl;
       document.getElementById('modalAvatarPreview').src = newUrl;
+      if (document.getElementById('headerAvatar')) {
+        document.getElementById('headerAvatar').src = newUrl;
+      }
     } else {
       alert(data.message || 'Có lỗi xảy ra!');
     }
@@ -553,7 +827,7 @@ function uploadAvatar() {
 
       <div class="bot-body" id="chatBody">
         <div class="chat-msg bot">
-          Chào <?php echo htmlspecialchars($hoTen, ENT_QUOTES, 'UTF-8'); ?>! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
+          Chào <?php echo dashH($hoTen); ?>! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
         </div>
         <div class="chat-suggestions" id="chatSuggestions">
           <button class="suggestion-chip" onclick="sendQuickMessage('Cho tôi xem kết quả học tập')">Xem điểm</button>
@@ -590,14 +864,21 @@ function uploadAvatar() {
        <button onclick="document.getElementById('sysNotiModal').style.display='none'" style="position: absolute; right: 15px; top: 15px; background: none; border: none; color: #fff; font-size: 20px; cursor: pointer;">&times;</button>
     </div>
     <div style="padding: 20px; max-height: 400px; overflow-y: auto;">
-       <?php if (empty($systemNotifications)): ?>
-         <p style="text-align: center; color: #666;">Không có thông báo mới.</p>
+       <?php if (empty($systemNotifications) && empty($upcomingDeadlines)): ?>
+         <p style="text-align: center; color: #666;">Không có thông báo hoặc deadline mới.</p>
        <?php else: ?>
          <?php foreach ($systemNotifications as $noti): ?>
-           <div style="padding: 12px; border-left: 4px solid <?php echo $noti['type'] == 'event' ? '#ff9800' : '#2196f3'; ?>; background: #f9f9f9; margin-bottom: 15px; border-radius: 4px;">
-             <h4 style="margin: 0 0 5px 0; color: #333; font-size: 16px;"><?php echo htmlspecialchars($noti['title']); ?></h4>
-             <span style="font-size: 12px; color: #888; display: block; margin-bottom: 8px;"><?php echo date('d/m/Y H:i', strtotime($noti['created_at'])); ?></span>
-             <p style="margin: 0; color: #555; font-size: 14px;"><?php echo nl2br(htmlspecialchars($noti['content'])); ?></p>
+           <div style="padding: 12px; border-left: 4px solid <?php echo ($noti['type'] ?? '') === 'event' ? '#ff9800' : '#2196f3'; ?>; background: #f9f9f9; margin-bottom: 15px; border-radius: 4px;">
+             <h4 style="margin: 0 0 5px 0; color: #333; font-size: 16px;"><?php echo dashH($noti['title'] ?? 'Thông báo'); ?></h4>
+             <span style="font-size: 12px; color: #888; display: block; margin-bottom: 8px;"><?php echo dashH(dashDateTime($noti['created_at'] ?? null)); ?></span>
+             <p style="margin: 0; color: #555; font-size: 14px;"><?php echo nl2br(dashH($noti['content'] ?? '')); ?></p>
+           </div>
+         <?php endforeach; ?>
+         <?php foreach ($upcomingDeadlines as $deadline): ?>
+           <div style="padding: 12px; border-left: 4px solid #d32f2f; background: #fff8f8; margin-bottom: 15px; border-radius: 4px;">
+             <h4 style="margin: 0 0 5px 0; color: #333; font-size: 16px;"><?php echo dashH($deadline['title'] ?? 'Deadline'); ?></h4>
+             <span style="font-size: 12px; color: #d32f2f; display: block; margin-bottom: 8px;">Hạn: <?php echo dashH(dashDateTime($deadline['due_at'] ?? null)); ?></span>
+             <p style="margin: 0; color: #555; font-size: 14px;"><?php echo nl2br(dashH($deadline['description'] ?? '')); ?></p>
            </div>
          <?php endforeach; ?>
        <?php endif; ?>
@@ -628,10 +909,10 @@ function uploadAvatar() {
            <tbody>
              <?php foreach ($classSchedules as $class): ?>
                <tr style="border-bottom: 1px solid #eee;">
-                 <td style="padding: 12px; font-weight: bold; color: #007976;">Thứ <?php echo $class['day_of_week']; ?></td>
-                 <td style="padding: 12px;"><?php echo htmlspecialchars($class['subject_name']); ?></td>
-                 <td style="padding: 12px; color: #555;"><?php echo date('H:i', strtotime($class['start_time'])) . ' - ' . date('H:i', strtotime($class['end_time'])); ?></td>
-                 <td style="padding: 12px;"><span style="background: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: 500;"><?php echo htmlspecialchars($class['room']); ?></span></td>
+                 <td style="padding: 12px; font-weight: bold; color: #007976;"><?php echo dashH(dashDayLabel($class['day_of_week'] ?? 0)); ?></td>
+                 <td style="padding: 12px;"><?php echo dashH($class['subject_name'] ?? 'Chưa cập nhật'); ?></td>
+                 <td style="padding: 12px; color: #555;"><?php echo dashH(date('H:i', strtotime($class['start_time'])) . ' - ' . date('H:i', strtotime($class['end_time']))); ?></td>
+                 <td style="padding: 12px;"><span style="background: #e3f2fd; color: #1976d2; padding: 4px 8px; border-radius: 4px; font-size: 13px; font-weight: 500;"><?php echo dashH($class['room'] ?: 'Chưa cập nhật'); ?></span></td>
                </tr>
              <?php endforeach; ?>
            </tbody>
@@ -658,8 +939,8 @@ window.UTH_CONTEXT = {
   tomorrowLabel: <?php echo json_encode(date('d/m/Y', strtotime('+1 day')), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   todaySchedule: <?php echo json_encode($todaySchedule, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   tomorrowSchedule: <?php echo json_encode($tomorrowSchedule, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
-  todayDeadlines: [],
-  tomorrowDeadlines: [],
+  todayDeadlines: <?php echo json_encode($todayDeadlines, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
+  tomorrowDeadlines: <?php echo json_encode($tomorrowDeadlines, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   systemNotifications: <?php echo json_encode($systemNotifications, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>
 };
 
@@ -723,9 +1004,31 @@ document.getElementById('ticketModal').addEventListener('click', e => {
     document.getElementById('ticketModal').classList.remove('active');
 });
 
-// Render static calendar
-function renderStaticCalendar() {
+const calendarData = {
+  year: <?php echo (int)$calendarYear; ?>,
+  month: <?php echo (int)$calendarMonth; ?>,
+  today: <?php echo json_encode(date('Y-m-d'), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
+  events: <?php echo json_encode($calendarEvents, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>
+};
+let calendarCursor = { year: calendarData.year, month: calendarData.month };
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function dotClassForEvent(type) {
+  if (type === 'deadline') return 'd2';
+  if (type === 'event') return 'd3';
+  return 'd1';
+}
+
+function renderCalendar() {
   const grid = document.getElementById('calGrid');
+  const label = document.getElementById('calMonthLabel');
+  if (!grid || !label) return;
+  grid.innerHTML = '';
+  label.textContent = `tháng ${calendarCursor.month} ${calendarCursor.year}`;
+
   const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
 
   days.forEach((d, i) => {
@@ -735,38 +1038,65 @@ function renderStaticCalendar() {
     grid.appendChild(el);
   });
 
-  for(let i=0; i<3; i++) {
+  const firstDay = new Date(calendarCursor.year, calendarCursor.month - 1, 1).getDay();
+  const daysInMonth = new Date(calendarCursor.year, calendarCursor.month, 0).getDate();
+
+  for(let i = 0; i < firstDay; i++) {
     const el = document.createElement('div');
     el.className = 'cal-cell empty';
     grid.appendChild(el);
   }
 
-  const eventDays = [1, 2, 3, 4, 7, 14, 15, 18, 19, 20, 21, 27, 28];
-
-  for(let i=1; i<=31; i++) {
+  for(let i = 1; i <= daysInMonth; i++) {
+    const dateKey = `${calendarCursor.year}-${pad2(calendarCursor.month)}-${pad2(i)}`;
+    const events = calendarData.events[dateKey] || [];
     const el = document.createElement('div');
     el.className = 'cal-cell';
 
-    if (eventDays.includes(i)) el.classList.add('has-event');
-    if (i === 8) el.classList.add('today');
+    if (events.length > 0) {
+      el.classList.add('has-event');
+      el.title = events.map(item => `${item.time ? item.time + ' - ' : ''}${item.title}`).join('\n');
+    }
+    if (dateKey === calendarData.today) el.classList.add('today');
 
     const num = document.createElement('div');
     num.className = 'cal-num';
     num.textContent = i;
     el.appendChild(num);
 
-    if(eventDays.includes(i)) {
+    if(events.length > 0) {
       const dots = document.createElement('div');
       dots.className = 'cal-dots';
-      dots.innerHTML = '<span class="dot d1"></span>';
-      if(i%2===0) dots.innerHTML += '<span class="dot d2"></span>';
-      if(i%3===0) dots.innerHTML += '<span class="dot d3"></span>';
+      [...new Set(events.map(item => dotClassForEvent(item.type)))].slice(0, 3).forEach(dotClass => {
+        const dot = document.createElement('span');
+        dot.className = `dot ${dotClass}`;
+        dots.appendChild(dot);
+      });
       el.appendChild(dots);
     }
     grid.appendChild(el);
   }
 }
-renderStaticCalendar();
+
+document.getElementById('calPrevBtn')?.addEventListener('click', () => {
+  calendarCursor.month -= 1;
+  if (calendarCursor.month < 1) {
+    calendarCursor.month = 12;
+    calendarCursor.year -= 1;
+  }
+  renderCalendar();
+});
+
+document.getElementById('calNextBtn')?.addEventListener('click', () => {
+  calendarCursor.month += 1;
+  if (calendarCursor.month > 12) {
+    calendarCursor.month = 1;
+    calendarCursor.year += 1;
+  }
+  renderCalendar();
+});
+
+renderCalendar();
 
 // Sidebar logic
 const menuBtn = document.querySelector('.menu-btn');
@@ -794,6 +1124,6 @@ function handleSidebarClick(msg) {
   openChatbotWithMsg(msg);
 }
 </script>
-<script src="js/chatbot.js"></script>
+<script src="../js/chatbot.js?v=<?php echo filemtime(__DIR__.'/../js/chatbot.js'); ?>"></script>
 </body>
 </html>

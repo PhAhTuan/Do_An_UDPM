@@ -6,27 +6,52 @@ $error = '';
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $username = trim($_POST['username'] ?? '');
     $password = $_POST['password'] ?? '';
-    include __DIR__.'/config.php';
-    require_once __DIR__.'/faq_helpers.php';
+    include __DIR__.'/../config.php';
+    require_once __DIR__.'/../core/faq_helpers.php';
     try {
         $pdo  = connectDatabase($db_host, $db_port, $db_name, $db_user, $db_pass);
-        $stmt = $pdo->prepare('SELECT * FROM users WHERE username = ? LIMIT 1');
-        $stmt->execute([$username]);
-        $user = $stmt->fetch(PDO::FETCH_ASSOC);
-        if ($user && $password === $user['password']) {
-            $_SESSION['user_id']  = $user['id'];
+        $user = appFindUserForLogin($pdo, $username);
+        if (!$user) {
+            $error = 'Debug: User not found in db';
+        } else if ($user['status'] !== 'active') {
+            $error = 'Debug: User not active';
+        } else if (!password_verify($password, $user['password_hash'])) {
+            $error = 'Debug: Password verify failed';
+        } else {
+            if (password_needs_rehash($user['password_hash'], PASSWORD_DEFAULT)) {
+                dbExecute($pdo, 'UPDATE users SET password_hash = ?, password_changed_at = NOW() WHERE id = ?', [
+                    password_hash($password, PASSWORD_DEFAULT),
+                    (int)$user['id'],
+                ]);
+            }
+
+            session_regenerate_id(true);
+            $_SESSION['user_id']  = (int)$user['id'];
             $_SESSION['username'] = $user['username'];
-            $_SESSION['role']     = $user['role'];
-            $_SESSION['ho_ten']   = $user['ho_ten'];
-            if ($user['role'] === 'admin') {
+            $_SESSION['role']     = $user['role_code'];
+            $_SESSION['ho_ten']   = $user['full_name'];
+            $_SESSION['avatar']   = $user['avatar_url'] ?? '';
+
+            dbExecute($pdo, 'UPDATE users SET last_login_at = NOW() WHERE id = ?', [(int)$user['id']]);
+
+            if ($user['role_code'] === 'admin' || $user['role_code'] === 'knowledge_reviewer' || $user['role_code'] === 'staff') {
                 header('Location: admin_dashboard.php'); exit;
             }
-            $_SESSION['mssv'] = $user['username'];
+            $_SESSION['mssv'] = $user['student_code'] ?: $user['username'];
             header('Location: dashboard.php'); exit;
         }
-        $error = 'Tài khoản hoặc mật khẩu không chính xác.';
     } catch (Throwable $e) {
-        $error = 'Không thể kết nối cơ sở dữ liệu. Vui lòng thử lại sau.';
+        $error = 'Debug SQL error: ' . $e->getMessage();
+    }
+} else {
+    if (isset($_SESSION['user_id'])) {
+        $_SESSION = [];
+        if (ini_get('session.use_cookies')) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', time() - 42000, $params['path'], $params['domain'], $params['secure'], $params['httponly']);
+        }
+        session_destroy();
+        session_start();
     }
 }
 ?>
@@ -40,7 +65,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/login.css">
+  <link rel="stylesheet" href="../css/login.css">
 </head>
 <body>
 

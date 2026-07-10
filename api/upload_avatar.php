@@ -31,7 +31,7 @@ if ($file['size'] > 5 * 1024 * 1024) {
     exit;
 }
 
-$uploadDir = __DIR__ . '/uploads/avatars/';
+$uploadDir = __DIR__ . '/../uploads/avatars/';
 if (!is_dir($uploadDir)) {
     mkdir($uploadDir, 0755, true);
 }
@@ -42,14 +42,14 @@ $destination = $uploadDir . $filename;
 
 if (move_uploaded_file($file['tmp_name'], $destination)) {
     // Lưu vào database
-    include 'config.php';
+    include __DIR__.'/../config.php';
+    require_once __DIR__.'/../core/faq_helpers.php';
     try {
-        $pdo = new PDO("mysql:host=$db_host;port=$db_port;dbname=$db_name;charset=utf8mb4", $db_user, $db_pass);
+        $pdo = connectDatabase($db_host, $db_port, $db_name, $db_user, $db_pass);
         
         // Cập nhật CSDL
         $avatarPath = 'uploads/avatars/' . $filename;
-        $stmt = $pdo->prepare('UPDATE users SET avatar = ? WHERE id = ?');
-        $stmt->execute([$avatarPath, $_SESSION['user_id']]);
+        dbExecute($pdo, 'UPDATE users SET avatar_url = ? WHERE id = ?', [$avatarPath, $_SESSION['user_id']]);
         
         // Cập nhật session
         $_SESSION['avatar'] = $avatarPath;

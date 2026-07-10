@@ -1,1 +1,4 @@
 config.php
+.env
+.DS_Store
+uploads/avatars/*
