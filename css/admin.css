@@ -74,7 +74,11 @@ body{display:flex;min-height:100vh}
 .menu-item.logout:hover{background:rgba(239,68,68,.2);color:#fff!important;}
 
 /* ===== MAIN CONTENT ===== */
-.main-content{flex:1;display:flex;flex-direction:column;min-height:100vh;overflow:hidden}
+.main-content{
+  flex:1;display:flex;flex-direction:column;
+  height:100vh;min-height:100vh;
+  overflow-x:hidden;overflow-y:auto;
+}
 
 /* ===== HEADER BAR ===== */
 .header{
@@ -295,6 +299,7 @@ label.field-label{font-size:12.5px;font-weight:500;color:var(--text)}
 .schedule-list-panel{min-width:0}
 .schedule-table-wrap{max-height:560px;overflow:auto}
 .schedule-muted{font-size:12px;color:var(--muted)}
+.schedule-filter-empty{text-align:center;color:var(--muted);font-style:italic}
 .log-empty.compact{padding:36px 20px}
 
 /* Log tab empty */

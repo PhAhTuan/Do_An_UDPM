@@ -539,6 +539,7 @@ $currentSemester = dbFetchOne($pdo, "SELECT name, semester_number, start_date, e
 $scheduleStatus = (string)($_GET['schedule_status'] ?? '');
 $weeklyScheduleRows = dbFetchAll($pdo, "
     SELECT
+        sp.id AS student_id,
         sp.student_code,
         u.full_name,
         s.code AS subject_code,
@@ -562,7 +563,7 @@ $weeklyScheduleRows = dbFetchAll($pdo, "
     JOIN class_schedule_sessions css ON css.course_section_id = cs.id
     WHERE e.enrollment_status IN ('registered', 'studying')
     ORDER BY u.full_name ASC, css.day_of_week ASC, css.start_time ASC
-    LIMIT 80
+    LIMIT 500
 ");
 $adminWeekdayLabels = [
     1 => 'Thứ 2',
@@ -963,7 +964,7 @@ if ($selectedLogSessionId > 0) {
                         <div class="schedule-form-grid">
                             <div class="field-group field-span-2">
                                 <label class="field-label">Sinh viên</label>
-                                <select class="faq-input" name="student_id" required>
+                                <select class="faq-input" name="student_id" id="scheduleStudentSelect" required>
                                     <option value="">Chọn sinh viên</option>
                                     <?php foreach ($students as $sv): ?>
                                         <?php if (empty($sv['student_id'])) continue; ?>
@@ -1078,7 +1079,7 @@ if ($selectedLogSessionId > 0) {
                                             $roomText = trim((string)($row['room'] ?? ''));
                                             $campusText = trim((string)($row['campus'] ?? ''));
                                         ?>
-                                        <tr>
+                                        <tr class="schedule-row" data-student-id="<?php echo (int)$row['student_id']; ?>">
                                             <td>
                                                 <b><?php echo h($row['full_name']); ?></b><br>
                                                 <span class="schedule-muted"><?php echo h($row['student_code']); ?></span>
@@ -1095,12 +1096,42 @@ if ($selectedLogSessionId > 0) {
                                             </td>
                                         </tr>
                                     <?php endforeach; ?>
+                                    <tr id="scheduleEmptyFilterRow" style="display:none;">
+                                        <td colspan="5" class="schedule-filter-empty">Chưa có lịch học cho sinh viên này.</td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
                     <?php endif; ?>
                 </div>
             </div>
+
+            <script>
+            (function() {
+                const select = document.getElementById('scheduleStudentSelect');
+                const rows = Array.from(document.querySelectorAll('.schedule-row'));
+                const emptyRow = document.getElementById('scheduleEmptyFilterRow');
+                if (!select || rows.length === 0) return;
+
+                function filterWeeklyScheduleRows() {
+                    const selectedStudentId = select.value;
+                    let visibleCount = 0;
+
+                    rows.forEach(row => {
+                        const visible = selectedStudentId === '' || row.dataset.studentId === selectedStudentId;
+                        row.hidden = !visible;
+                        if (visible) visibleCount += 1;
+                    });
+
+                    if (emptyRow) {
+                        emptyRow.style.display = selectedStudentId !== '' && visibleCount === 0 ? '' : 'none';
+                    }
+                }
+
+                select.addEventListener('change', filterWeeklyScheduleRows);
+                filterWeeklyScheduleRows();
+            })();
+            </script>
             
             <div class="table-container">
                 <table> 
