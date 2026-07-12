@@ -657,14 +657,25 @@ try {
 
     $classification = classifyQuestion($userMessage);
     $entities = detectEntities($userMessage, $student);
+    $currentUserId = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : null;
+    $chatSessionUserId = isset($_SESSION['chat_session_user_id']) ? (int)$_SESSION['chat_session_user_id'] : null;
+    if ($currentUserId !== $chatSessionUserId) {
+        unset($_SESSION['chat_session_uuid'], $_SESSION['chat_session_db_id']);
+        $_SESSION['chat_session_user_id'] = $currentUserId;
+    }
+    $requestSessionUuid = trim((string)($data['sessionUuid'] ?? ''));
+    if ($requestSessionUuid === '') {
+        $requestSessionUuid = $_SESSION['chat_session_uuid'] ?? null;
+    }
     $chatSession = appEnsureChatSession(
         $pdo,
-        $data['sessionUuid'] ?? ($_SESSION['chat_session_uuid'] ?? null),
-        $_SESSION['user_id'] ?? null,
+        $requestSessionUuid,
+        $currentUserId,
         mb_substr($userMessage, 0, 80, 'UTF-8')
     );
     $_SESSION['chat_session_uuid'] = $chatSession['session_uuid'];
     $_SESSION['chat_session_db_id'] = (int)$chatSession['id'];
+    $_SESSION['chat_session_user_id'] = $currentUserId;
 
     $userMessageId = appLogChatMessage(
         $pdo,

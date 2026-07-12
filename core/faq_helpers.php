@@ -291,18 +291,29 @@ function appSafeStudentList(PDO $pdo): array {
 }
 
 function appEnsureChatSession(PDO $pdo, ?string $sessionUuid, ?int $userId, string $title = 'Trò chuyện UTH'): array {
-    if ($sessionUuid && preg_match('/^[0-9a-fA-F-]{36}$/', $sessionUuid)) {
-        $existing = dbFetchOne($pdo, 'SELECT * FROM chat_sessions WHERE session_uuid = ? LIMIT 1', [$sessionUuid]);
-        if ($existing) {
-            dbExecute($pdo, 'UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = ?', [(int)$existing['id']]);
-            return $existing;
-        }
-    }
-
     if ($userId !== null) {
         $userExists = dbFetchValue($pdo, 'SELECT id FROM users WHERE id = ?', [$userId]);
         if (!$userExists) {
             $userId = null;
+        }
+    }
+
+    if ($sessionUuid && preg_match('/^[0-9a-fA-F-]{36}$/', $sessionUuid)) {
+        $existing = dbFetchOne($pdo, 'SELECT * FROM chat_sessions WHERE session_uuid = ? LIMIT 1', [$sessionUuid]);
+        if ($existing) {
+            $existingUserId = $existing['user_id'] !== null ? (int)$existing['user_id'] : null;
+            if ($userId !== null && $existingUserId !== null && $existingUserId !== $userId) {
+                $existing = null;
+            } elseif ($userId === null && $existingUserId !== null) {
+                $existing = null;
+            } else {
+                if ($userId !== null && $existingUserId === null) {
+                    dbExecute($pdo, 'UPDATE chat_sessions SET user_id = ? WHERE id = ?', [$userId, (int)$existing['id']]);
+                    $existing['user_id'] = $userId;
+                }
+                dbExecute($pdo, 'UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = ?', [(int)$existing['id']]);
+                return $existing;
+            }
         }
     }
 

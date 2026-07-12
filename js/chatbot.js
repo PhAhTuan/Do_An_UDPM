@@ -1,27 +1,41 @@
 // ==========================================
 // 1. QUẢN LÝ LỊCH SỬ TRÒ CHUYỆN (SESSIONS)
 // ==========================================
-const CHAT_STORAGE_VERSION = '2026-07-10-navigation-fixes-v3';
-const CHAT_STORAGE_VERSION_KEY = 'uth_chat_storage_version';
+const CHAT_CONTEXT = window.UTH_CONTEXT || {};
+const CHAT_OWNER_KEY = String(CHAT_CONTEXT.userId || CHAT_CONTEXT.mssv || 'guest')
+    .replace(/[^a-zA-Z0-9_-]/g, '_')
+    .slice(0, 80) || 'guest';
+const CHAT_STORAGE_PREFIX = 'uth_chat_' + CHAT_OWNER_KEY;
+const CHAT_SESSIONS_KEY = CHAT_STORAGE_PREFIX + '_sessions';
+const CHAT_CURRENT_SESSION_KEY = CHAT_STORAGE_PREFIX + '_current_session';
+const CHAT_STORAGE_VERSION = '2026-07-12-per-student-v4';
+const CHAT_STORAGE_VERSION_KEY = CHAT_STORAGE_PREFIX + '_version';
 if (localStorage.getItem(CHAT_STORAGE_VERSION_KEY) !== CHAT_STORAGE_VERSION) {
-    localStorage.removeItem('uth_chat_sessions');
-    localStorage.removeItem('uth_current_session');
+    localStorage.removeItem(CHAT_SESSIONS_KEY);
+    localStorage.removeItem(CHAT_CURRENT_SESSION_KEY);
     localStorage.setItem(CHAT_STORAGE_VERSION_KEY, CHAT_STORAGE_VERSION);
 }
+localStorage.removeItem('uth_chat_sessions');
+localStorage.removeItem('uth_current_session');
 
 function readStoredChatSessions() {
     try {
-        const value = JSON.parse(localStorage.getItem('uth_chat_sessions') || '[]');
-        return Array.isArray(value) ? value : [];
+        const value = JSON.parse(localStorage.getItem(CHAT_SESSIONS_KEY) || '[]');
+        if (!Array.isArray(value)) return [];
+        return value.filter(session => !session.ownerKey || session.ownerKey === CHAT_OWNER_KEY);
     } catch (e) {
-        localStorage.removeItem('uth_chat_sessions');
+        localStorage.removeItem(CHAT_SESSIONS_KEY);
         return [];
     }
 }
 
 let chatSessions = readStoredChatSessions();
-let currentSessionId = localStorage.getItem('uth_current_session') || null;
-const VOICE_AUTO_KEY = 'uth_chat_voice_auto';
+let currentSessionId = localStorage.getItem(CHAT_CURRENT_SESSION_KEY) || null;
+if (currentSessionId && !chatSessions.some(session => session.id === currentSessionId)) {
+    currentSessionId = null;
+    localStorage.removeItem(CHAT_CURRENT_SESSION_KEY);
+}
+const VOICE_AUTO_KEY = CHAT_STORAGE_PREFIX + '_voice_auto';
 const TTS_API_URL = '../api/text_to_speech.php';
 let voiceAutoRead = localStorage.getItem(VOICE_AUTO_KEY) === '1';
 let activeAudio = null;
@@ -201,27 +215,20 @@ function toggleVoiceMode() {
 }
 
 function saveSessions() {
-    localStorage.setItem('uth_chat_sessions', JSON.stringify(chatSessions));
+    chatSessions = chatSessions.map(session => ({ ...session, ownerKey: CHAT_OWNER_KEY }));
+    localStorage.setItem(CHAT_SESSIONS_KEY, JSON.stringify(chatSessions));
     if (currentSessionId) {
-        localStorage.setItem('uth_current_session', currentSessionId);
+        localStorage.setItem(CHAT_CURRENT_SESSION_KEY, currentSessionId);
+    } else {
+        localStorage.removeItem(CHAT_CURRENT_SESSION_KEY);
     }
 }
 
-function startNewChat() {
-    currentSessionId = "SS-" + Date.now();
-    chatSessions.unshift({
-        id: currentSessionId,
-        dbSessionUuid: null,
-        title: "Trò chuyện mới",
-        messages: [],
-        date: new Date().toLocaleString('vi-VN')
-    });
-    saveSessions();
-    renderHistoryList();
-
-    // Xóa trắng UI
-    let name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
-    document.getElementById("chatBody").innerHTML = `
+function renderWelcomeChat() {
+    const body = document.getElementById("chatBody");
+    if (!body) return;
+    const name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
+    body.innerHTML = `
       <div class="chat-msg bot">
         Chào ${escapeHTML(name)}! Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
       </div>
@@ -231,6 +238,22 @@ function startNewChat() {
         <button class="suggestion-chip" onclick="sendQuickMessage('Tôi còn nợ bao nhiêu tiền học phí?')">Học phí</button>
       </div>
     `;
+}
+
+function startNewChat() {
+    currentSessionId = "SS-" + Date.now();
+    chatSessions.unshift({
+        id: currentSessionId,
+        ownerKey: CHAT_OWNER_KEY,
+        dbSessionUuid: null,
+        title: "Trò chuyện mới",
+        messages: [],
+        date: new Date().toLocaleString('vi-VN')
+    });
+    saveSessions();
+    renderHistoryList();
+
+    renderWelcomeChat();
 
     // Ẩn sidebar nếu đang bật
     var sb = document.getElementById("botSidebar");
@@ -252,12 +275,7 @@ function loadChatSession(id) {
 
     // Nếu không có tin nhắn nào thì hiện lời chào
     if(session.messages.length === 0){
-        let name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
-        body.innerHTML = `
-          <div class="chat-msg bot">
-            Chào ${escapeHTML(name)}! Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
-          </div>
-        `;
+        renderWelcomeChat();
     }
 
     // Ẩn sidebar
@@ -271,6 +289,7 @@ function saveMessageToHistory(role, content, meta = {}) {
         currentSessionId = "SS-" + Date.now();
         chatSessions.unshift({
             id: currentSessionId,
+            ownerKey: CHAT_OWNER_KEY,
             dbSessionUuid: null,
             title: content.substring(0, 30) + "...", // Lấy tin đầu tiên làm title
             messages: [],
@@ -305,6 +324,7 @@ function renderHistoryList() {
         div.onclick = () => loadChatSession(session.id);
 
         const textWrap = document.createElement('div');
+        textWrap.className = 'history-text';
         const title = document.createElement('div');
         title.className = 'history-title';
         title.textContent = session.title || 'Trò chuyện';
@@ -314,8 +334,70 @@ function renderHistoryList() {
         textWrap.appendChild(title);
         textWrap.appendChild(date);
         div.appendChild(textWrap);
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.type = 'button';
+        deleteBtn.className = 'history-delete-btn';
+        deleteBtn.textContent = 'Xóa';
+        deleteBtn.title = 'Xóa cuộc trò chuyện này';
+        deleteBtn.onclick = (event) => {
+            event.stopPropagation();
+            deleteChatSession(session.id);
+        };
+        div.appendChild(deleteBtn);
         list.appendChild(div);
     });
+}
+
+async function deleteChatHistoryOnServer(payload) {
+    const response = await fetch('../api/delete_chat_history.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.success) {
+        throw new Error(data.error || 'Không thể xóa lịch sử trò chuyện.');
+    }
+    return data;
+}
+
+async function deleteChatSession(sessionId) {
+    const session = chatSessions.find(item => item.id === sessionId);
+    if (!session) return;
+    if (!confirm('Xóa cuộc trò chuyện này?')) return;
+
+    try {
+        if (session.dbSessionUuid) {
+            await deleteChatHistoryOnServer({ sessionUuid: session.dbSessionUuid });
+        }
+        stopSpeech();
+        chatSessions = chatSessions.filter(item => item.id !== sessionId);
+        if (currentSessionId === sessionId) {
+            currentSessionId = null;
+            renderWelcomeChat();
+        }
+        saveSessions();
+        renderHistoryList();
+    } catch (error) {
+        alert(error.message || 'Không thể xóa lịch sử trò chuyện.');
+    }
+}
+
+async function deleteAllChatHistory() {
+    if (!confirm('Xóa toàn bộ lịch sử trò chuyện với chatbot?')) return;
+
+    try {
+        await deleteChatHistoryOnServer({ deleteAll: true });
+        stopSpeech();
+        chatSessions = [];
+        currentSessionId = null;
+        saveSessions();
+        renderHistoryList();
+        renderWelcomeChat();
+    } catch (error) {
+        alert(error.message || 'Không thể xóa lịch sử trò chuyện.');
+    }
 }
 
 function toggleHistory() {
@@ -762,7 +844,7 @@ function toggleChatWindow() {
         } else if (currentSessionId) {
             loadChatSession(currentSessionId);
         } else {
-            startNewChat();
+            renderWelcomeChat();
         }
     }
 }

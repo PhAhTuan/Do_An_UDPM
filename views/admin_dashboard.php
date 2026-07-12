@@ -69,6 +69,93 @@ function adminSnippet(?string $value, int $limit = 120): string {
     return rtrim(mb_substr($text, 0, $limit - 1, 'UTF-8')).'...';
 }
 
+function adminAcademicYearRange(string $code): array {
+    if (preg_match('/^(20\d{2})\s*-\s*(20\d{2})$/', $code, $m)) {
+        return [$m[1].'-08-01', $m[2].'-07-31'];
+    }
+    $year = (int)date('Y');
+    return [$year.'-08-01', ($year + 1).'-07-31'];
+}
+
+function adminSemesterDefaults(string $yearCode, int $semesterNumber): array {
+    [$yearStart, $yearEnd] = adminAcademicYearRange($yearCode);
+    $startYear = (int)substr($yearStart, 0, 4);
+    $endYear = (int)substr($yearEnd, 0, 4);
+    return match ($semesterNumber) {
+        2 => [
+            'code' => 'HK2_'.str_replace('-', '_', $yearCode),
+            'name' => 'Học kỳ 2 năm học '.$yearCode,
+            'start_date' => $endYear.'-01-01',
+            'end_date' => $endYear.'-05-31',
+        ],
+        3 => [
+            'code' => 'HK_HE_'.$endYear,
+            'name' => 'Học kỳ hè năm học '.$yearCode,
+            'start_date' => $endYear.'-06-01',
+            'end_date' => $endYear.'-07-31',
+        ],
+        default => [
+            'code' => 'HK1_'.str_replace('-', '_', $yearCode),
+            'name' => 'Học kỳ 1 năm học '.$yearCode,
+            'start_date' => $startYear.'-08-01',
+            'end_date' => $startYear.'-12-31',
+        ],
+    };
+}
+
+function adminFindOrCreateAcademicYear(PDO $pdo, string $code): int {
+    $row = dbFetchOne($pdo, "SELECT id FROM academic_years WHERE code = ? LIMIT 1", [$code]);
+    if ($row) return (int)$row['id'];
+    [$start, $end] = adminAcademicYearRange($code);
+    dbExecute($pdo, "INSERT INTO academic_years (code, start_date, end_date, is_current) VALUES (?, ?, ?, 0)", [$code, $start, $end]);
+    return (int)$pdo->lastInsertId();
+}
+
+function adminFindOrCreateSemester(PDO $pdo, int $academicYearId, string $yearCode, int $semesterNumber, ?string $name, ?string $startDate, ?string $endDate): int {
+    $defaults = adminSemesterDefaults($yearCode, $semesterNumber);
+    $code = $defaults['code'];
+    $row = dbFetchOne($pdo, "SELECT id FROM semesters WHERE academic_year_id = ? AND code = ? LIMIT 1", [$academicYearId, $code]);
+    if ($row) return (int)$row['id'];
+    dbExecute($pdo, "
+        INSERT INTO semesters (academic_year_id, code, name, semester_number, start_date, end_date, is_current)
+        VALUES (?, ?, ?, ?, ?, ?, 0)
+    ", [
+        $academicYearId,
+        $code,
+        trim((string)$name) ?: $defaults['name'],
+        $semesterNumber,
+        $startDate ?: $defaults['start_date'],
+        $endDate ?: $defaults['end_date'],
+    ]);
+    return (int)$pdo->lastInsertId();
+}
+
+function adminFindOrCreateSubject(PDO $pdo, string $code, string $name, int $credits): int {
+    $row = dbFetchOne($pdo, "SELECT id FROM subjects WHERE code = ? LIMIT 1", [$code]);
+    if ($row) {
+        dbExecute($pdo, "UPDATE subjects SET name = ?, credits = ?, status = 'active' WHERE id = ?", [$name, $credits, (int)$row['id']]);
+        return (int)$row['id'];
+    }
+    dbExecute($pdo, "
+        INSERT INTO subjects (code, name, credits, theory_periods, practice_periods, status)
+        VALUES (?, ?, ?, 0, 0, 'active')
+    ", [$code, $name, $credits]);
+    return (int)$pdo->lastInsertId();
+}
+
+function adminFindOrCreateCourseSection(PDO $pdo, int $semesterId, int $subjectId, string $sectionCode, ?string $lecturerName): int {
+    $row = dbFetchOne($pdo, "SELECT id FROM course_sections WHERE semester_id = ? AND section_code = ? LIMIT 1", [$semesterId, $sectionCode]);
+    if ($row) {
+        dbExecute($pdo, "UPDATE course_sections SET subject_id = ?, lecturer_name = ?, status = 'open' WHERE id = ?", [$subjectId, trim((string)$lecturerName) ?: null, (int)$row['id']]);
+        return (int)$row['id'];
+    }
+    dbExecute($pdo, "
+        INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+        VALUES (?, ?, ?, ?, NULL, 0, 'offline', 'open')
+    ", [$semesterId, $subjectId, $sectionCode, trim((string)$lecturerName) ?: null]);
+    return (int)$pdo->lastInsertId();
+}
+
 // XÁC ĐỊNH TAB ĐANG HOẠT ĐỘNG (Mặc định là dashboard nếu không có tham số)
 $currentTab = $_GET['tab'] ?? 'dashboard';
 // =========================================================================
@@ -274,6 +361,100 @@ if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action'])) {
         header("Location: admin_dashboard.php?tab=users");
         exit;
     }
+    elseif ($action === 'add_weekly_schedule') {
+        $studentId = (int)($_POST['student_id'] ?? 0);
+        $studentExists = dbFetchValue($pdo, "SELECT id FROM student_profiles WHERE id = ?", [$studentId]);
+        $yearCode = trim((string)($_POST['academic_year_code'] ?? ''));
+        if (!preg_match('/^(20\d{2})-(20\d{2})$/', $yearCode, $yearMatch) || (int)$yearMatch[2] <= (int)$yearMatch[1]) {
+            $currentYear = dbFetchValue($pdo, "SELECT code FROM academic_years WHERE is_current = 1 ORDER BY id DESC LIMIT 1");
+            $yearCode = $currentYear ?: date('Y').'-'.((int)date('Y') + 1);
+        }
+        $semesterNumber = max(1, min(3, (int)($_POST['semester_number'] ?? 1)));
+        $subjectCode = strtoupper(trim((string)($_POST['subject_code'] ?? '')));
+        $subjectName = trim((string)($_POST['subject_name'] ?? ''));
+        $credits = max(1, min(10, (int)($_POST['credits'] ?? 3)));
+        $dayOfWeek = max(1, min(7, (int)($_POST['day_of_week'] ?? 1)));
+        $startTime = trim((string)($_POST['start_time'] ?? ''));
+        $endTime = trim((string)($_POST['end_time'] ?? ''));
+        $room = trim((string)($_POST['room'] ?? ''));
+        $campus = trim((string)($_POST['campus'] ?? ''));
+        $lecturerName = trim((string)($_POST['lecturer_name'] ?? ''));
+        $validFrom = appDateOrNull($_POST['valid_from'] ?? null);
+        $validUntil = appDateOrNull($_POST['valid_until'] ?? null);
+
+        $timeOk = preg_match('/^\d{2}:\d{2}$/', $startTime) && preg_match('/^\d{2}:\d{2}$/', $endTime) && $startTime < $endTime;
+        $semesterDefaultsForValidation = adminSemesterDefaults($yearCode, $semesterNumber);
+        $dateOk = ($validFrom ?: $semesterDefaultsForValidation['start_date']) <= ($validUntil ?: $semesterDefaultsForValidation['end_date']);
+        if (!$studentExists || $subjectCode === '' || $subjectName === '' || !$timeOk || !$dateOk) {
+            header("Location: admin_dashboard.php?tab=users&schedule_status=invalid");
+            exit;
+        }
+
+        $sectionCode = strtoupper(trim((string)($_POST['section_code'] ?? '')));
+        if ($sectionCode === '') {
+            $sectionCode = $subjectCode.'_D'.$dayOfWeek.'_'.str_replace(':', '', $startTime);
+        }
+
+        try {
+            $pdo->beginTransaction();
+            $academicYearId = adminFindOrCreateAcademicYear($pdo, $yearCode);
+            $semesterId = adminFindOrCreateSemester(
+                $pdo,
+                $academicYearId,
+                $yearCode,
+                $semesterNumber,
+                trim((string)($_POST['semester_name'] ?? '')),
+                $validFrom,
+                $validUntil
+            );
+            $subjectId = adminFindOrCreateSubject($pdo, $subjectCode, $subjectName, $credits);
+            $sectionId = adminFindOrCreateCourseSection($pdo, $semesterId, $subjectId, $sectionCode, $lecturerName);
+
+            $scheduleExists = dbFetchValue($pdo, "
+                SELECT id
+                FROM class_schedule_sessions
+                WHERE course_section_id = ?
+                  AND day_of_week = ?
+                  AND start_time = ?
+                  AND end_time = ?
+                  AND COALESCE(room, '') = ?
+                  AND COALESCE(campus, '') = ?
+                LIMIT 1
+            ", [$sectionId, $dayOfWeek, $startTime.':00', $endTime.':00', $room, $campus]);
+            if (!$scheduleExists) {
+                dbExecute($pdo, "
+                    INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ", [$sectionId, $dayOfWeek, $startTime, $endTime, $room ?: null, $campus ?: null, $validFrom, $validUntil]);
+            }
+
+            dbExecute($pdo, "
+                INSERT INTO enrollments (student_id, course_section_id, enrollment_status, registered_at)
+                VALUES (?, ?, 'studying', NOW())
+                ON DUPLICATE KEY UPDATE enrollment_status = 'studying', withdrawn_at = NULL
+            ", [$studentId, $sectionId]);
+            dbExecute($pdo, "
+                UPDATE course_sections
+                SET registered_count = (
+                    SELECT COUNT(*)
+                    FROM enrollments
+                    WHERE course_section_id = ?
+                      AND enrollment_status IN ('registered', 'studying')
+                )
+                WHERE id = ?
+            ", [$sectionId, $sectionId]);
+            $pdo->commit();
+            header("Location: admin_dashboard.php?tab=users&schedule_status=added");
+            exit;
+        } catch (Throwable $e) {
+            if ($pdo->inTransaction()) {
+                $pdo->rollBack();
+            }
+            error_log('add_weekly_schedule: '.$e->getMessage());
+            header("Location: admin_dashboard.php?tab=users&schedule_status=error");
+            exit;
+        }
+    }
     elseif ($action === 'reply_ticket') {
         $ticket_id = (int)$_POST['ticket_id'];
         $reply_content = trim($_POST['admin_reply']);
@@ -353,6 +534,56 @@ $knowledgeSources = dbFetchAll($pdo, "
     ORDER BY is_official DESC, updated_at DESC, title ASC
 ");
 $students = appSafeStudentList($pdo);
+$currentAcademicYear = dbFetchOne($pdo, "SELECT code FROM academic_years WHERE is_current = 1 ORDER BY id DESC LIMIT 1");
+$currentSemester = dbFetchOne($pdo, "SELECT name, semester_number, start_date, end_date FROM semesters WHERE is_current = 1 ORDER BY id DESC LIMIT 1");
+$scheduleStatus = (string)($_GET['schedule_status'] ?? '');
+$weeklyScheduleRows = dbFetchAll($pdo, "
+    SELECT
+        sp.student_code,
+        u.full_name,
+        s.code AS subject_code,
+        s.name AS subject_name,
+        cs.section_code,
+        cs.lecturer_name,
+        css.day_of_week,
+        css.start_time,
+        css.end_time,
+        css.room,
+        css.campus,
+        sem.name AS semester_name,
+        ay.code AS academic_year
+    FROM enrollments e
+    JOIN student_profiles sp ON sp.id = e.student_id
+    JOIN users u ON u.id = sp.user_id
+    JOIN course_sections cs ON cs.id = e.course_section_id
+    JOIN subjects s ON s.id = cs.subject_id
+    JOIN semesters sem ON sem.id = cs.semester_id
+    JOIN academic_years ay ON ay.id = sem.academic_year_id
+    JOIN class_schedule_sessions css ON css.course_section_id = cs.id
+    WHERE e.enrollment_status IN ('registered', 'studying')
+    ORDER BY u.full_name ASC, css.day_of_week ASC, css.start_time ASC
+    LIMIT 80
+");
+$adminWeekdayLabels = [
+    1 => 'Thứ 2',
+    2 => 'Thứ 3',
+    3 => 'Thứ 4',
+    4 => 'Thứ 5',
+    5 => 'Thứ 6',
+    6 => 'Thứ 7',
+    7 => 'Chủ nhật',
+];
+$defaultAcademicYearCode = (string)($currentAcademicYear['code'] ?? (date('Y').'-'.((int)date('Y') + 1)));
+$defaultSemesterNumber = (int)($currentSemester['semester_number'] ?? 1);
+$defaultSemesterName = (string)($currentSemester['name'] ?? '');
+$defaultValidFrom = (string)($currentSemester['start_date'] ?? '');
+$defaultValidUntil = (string)($currentSemester['end_date'] ?? '');
+$scheduleNotice = match ($scheduleStatus) {
+    'added' => ['type' => 'success', 'message' => 'Đã thêm lịch học trong tuần cho sinh viên. Chatbot và trang sinh viên sẽ dùng lịch này ngay.'],
+    'invalid' => ['type' => 'error', 'message' => 'Thiếu sinh viên, mã môn, tên môn hoặc giờ/ngày áp dụng chưa hợp lệ.'],
+    'error' => ['type' => 'error', 'message' => 'Không thêm được lịch học. Vui lòng kiểm tra lại dữ liệu hoặc nhật ký lỗi.'],
+    default => null,
+};
 
 $logSearch = trim((string)($_GET['log_q'] ?? ''));
 $logIssueFilter = (string)($_GET['log_issue'] ?? 'all');
@@ -716,6 +947,159 @@ if ($selectedLogSessionId > 0) {
             <div class="page-title">
                 <span>Danh sách Tài khoản Sinh viên</span>
                 <button class="btn" onclick="document.getElementById('addUserModal').classList.add('active')">+ Cấp tài khoản mới</button>
+            </div>
+
+            <div class="schedule-admin-grid">
+                <div class="table-container schedule-form-panel">
+                    <h3>Thêm lịch học trong tuần cho sinh viên</h3>
+                    <form method="POST" action="admin_dashboard.php?tab=users" class="weekly-schedule-form">
+                        <input type="hidden" name="action" value="add_weekly_schedule">
+                        <?php if ($scheduleNotice): ?>
+                            <div class="schedule-alert <?php echo h($scheduleNotice['type']); ?>">
+                                <?php echo h($scheduleNotice['message']); ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <div class="schedule-form-grid">
+                            <div class="field-group field-span-2">
+                                <label class="field-label">Sinh viên</label>
+                                <select class="faq-input" name="student_id" required>
+                                    <option value="">Chọn sinh viên</option>
+                                    <?php foreach ($students as $sv): ?>
+                                        <?php if (empty($sv['student_id'])) continue; ?>
+                                        <option value="<?php echo (int)$sv['student_id']; ?>">
+                                            <?php echo h(($sv['mssv'] ?: $sv['username']).' - '.$sv['ho_ten']); ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+
+                            <div class="field-group">
+                                <label class="field-label">Năm học</label>
+                                <input class="faq-input" type="text" name="academic_year_code" value="<?php echo h($defaultAcademicYearCode); ?>" placeholder="2025-2026" required>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Học kỳ</label>
+                                <select class="faq-input" name="semester_number">
+                                    <option value="1" <?php echo $defaultSemesterNumber === 1 ? 'selected' : ''; ?>>Học kỳ 1</option>
+                                    <option value="2" <?php echo $defaultSemesterNumber === 2 ? 'selected' : ''; ?>>Học kỳ 2</option>
+                                    <option value="3" <?php echo $defaultSemesterNumber === 3 ? 'selected' : ''; ?>>Học kỳ hè</option>
+                                </select>
+                            </div>
+                            <div class="field-group field-span-2">
+                                <label class="field-label">Tên học kỳ</label>
+                                <input class="faq-input" type="text" name="semester_name" value="<?php echo h($defaultSemesterName); ?>" placeholder="Để trống sẽ tự đặt theo năm học">
+                            </div>
+
+                            <div class="field-group">
+                                <label class="field-label">Mã môn</label>
+                                <input class="faq-input" type="text" name="subject_code" placeholder="VD: CNTT101" required>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Số tín chỉ</label>
+                                <input class="faq-input" type="number" name="credits" min="1" max="10" value="3" required>
+                            </div>
+                            <div class="field-group field-span-2">
+                                <label class="field-label">Tên môn học</label>
+                                <input class="faq-input" type="text" name="subject_name" placeholder="VD: Nhập môn lập trình" required>
+                            </div>
+
+                            <div class="field-group">
+                                <label class="field-label">Mã lớp học phần</label>
+                                <input class="faq-input" type="text" name="section_code" placeholder="Để trống sẽ tự tạo">
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Giảng viên</label>
+                                <input class="faq-input" type="text" name="lecturer_name" placeholder="Tên giảng viên">
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Thứ</label>
+                                <select class="faq-input" name="day_of_week">
+                                    <?php foreach ($adminWeekdayLabels as $dayValue => $dayLabel): ?>
+                                        <option value="<?php echo (int)$dayValue; ?>"><?php echo h($dayLabel); ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="field-group schedule-time-pair">
+                                <div>
+                                    <label class="field-label">Bắt đầu</label>
+                                    <input class="faq-input" type="time" name="start_time" required>
+                                </div>
+                                <div>
+                                    <label class="field-label">Kết thúc</label>
+                                    <input class="faq-input" type="time" name="end_time" required>
+                                </div>
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Phòng</label>
+                                <input class="faq-input" type="text" name="room" placeholder="VD: A101">
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Cơ sở</label>
+                                <input class="faq-input" type="text" name="campus" placeholder="VD: Cơ sở 1">
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Áp dụng từ</label>
+                                <input class="faq-input" type="date" name="valid_from" value="<?php echo h($defaultValidFrom); ?>">
+                            </div>
+                            <div class="field-group">
+                                <label class="field-label">Áp dụng đến</label>
+                                <input class="faq-input" type="date" name="valid_until" value="<?php echo h($defaultValidUntil); ?>">
+                            </div>
+                        </div>
+
+                        <div class="schedule-actions">
+                            <button class="btn" type="submit">Thêm lịch học</button>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="table-container schedule-list-panel">
+                    <h3>Lịch học đang gán</h3>
+                    <?php if (empty($weeklyScheduleRows)): ?>
+                        <div class="log-empty compact">Chưa có lịch học nào được gán.</div>
+                    <?php else: ?>
+                        <div class="schedule-table-wrap">
+                            <table>
+                                <thead>
+                                    <tr>
+                                        <th>Sinh viên</th>
+                                        <th>Môn học</th>
+                                        <th>Thời gian</th>
+                                        <th>Phòng</th>
+                                        <th>Học kỳ</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <?php foreach ($weeklyScheduleRows as $row): ?>
+                                        <?php
+                                            $dayName = $adminWeekdayLabels[(int)$row['day_of_week']] ?? 'Ngày học';
+                                            $timeText = substr((string)$row['start_time'], 0, 5).' - '.substr((string)$row['end_time'], 0, 5);
+                                            $roomText = trim((string)($row['room'] ?? ''));
+                                            $campusText = trim((string)($row['campus'] ?? ''));
+                                        ?>
+                                        <tr>
+                                            <td>
+                                                <b><?php echo h($row['full_name']); ?></b><br>
+                                                <span class="schedule-muted"><?php echo h($row['student_code']); ?></span>
+                                            </td>
+                                            <td>
+                                                <b><?php echo h($row['subject_name']); ?></b><br>
+                                                <span class="schedule-muted"><?php echo h($row['subject_code'].' · '.$row['section_code']); ?></span>
+                                            </td>
+                                            <td><?php echo h($dayName.', '.$timeText); ?></td>
+                                            <td><?php echo h(($roomText ?: 'Chưa cập nhật').($campusText !== '' ? ' · '.$campusText : '')); ?></td>
+                                            <td>
+                                                <?php echo h($row['semester_name']); ?><br>
+                                                <span class="schedule-muted"><?php echo h($row['academic_year']); ?></span>
+                                            </td>
+                                        </tr>
+                                    <?php endforeach; ?>
+                                </tbody>
+                            </table>
+                        </div>
+                    <?php endif; ?>
+                </div>
             </div>
             
             <div class="table-container">

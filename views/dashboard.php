@@ -797,7 +797,10 @@ function uploadAvatar() {
           <span style="font-weight:600; color:#fff;">Lịch sử trò chuyện</span>
           <button class="bot-btn-sm" onclick="toggleHistory()" style="font-size:12px; width:auto; padding:0 8px;">Đóng</button>
         </div>
-        <button class="new-chat-btn" onclick="startNewChat()">+ Trò chuyện mới</button>
+        <div class="history-actions">
+          <button class="new-chat-btn" onclick="startNewChat()">+ Trò chuyện mới</button>
+          <button class="clear-chat-btn" onclick="deleteAllChatHistory()">Xóa tất cả</button>
+        </div>
         <div class="history-list" id="historyList">
           <!-- History items will be populated by JS -->
         </div>
@@ -1100,6 +1103,7 @@ function openScheduleModal() {
 }
 // Chat context
 window.UTH_CONTEXT = {
+  userId: <?php echo (int)$_SESSION['user_id']; ?>,
   studentName: <?php echo json_encode($hoTen, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   studentFirstName: <?php echo json_encode($tenGoi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   mssv: <?php echo json_encode($mssv, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
