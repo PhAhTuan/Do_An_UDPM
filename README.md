@@ -14,7 +14,7 @@ Dự án kết hợp sức mạnh của **Google Gemini API** cùng kỹ thuật
 
 ## ✨ Tính năng nổi bật
 1. **Chatbot AI thông minh (Gemini + RAG):**
-   - Trả lời câu hỏi tự nhiên theo ngữ cảnh.
+   - Trả lời câu hỏi tự nhiên theo ngữ cảnh. 
    - Tìm kiếm và trích xuất thông tin nội bộ (FAQ, quy chế đào tạo) qua kỹ thuật RAG.
 2. **Cá nhân hóa cho Sinh viên:**
    - Tra cứu thời khóa biểu, lịch thi, hạn chót (deadlines).

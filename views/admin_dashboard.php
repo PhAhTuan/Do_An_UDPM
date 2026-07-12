@@ -26,12 +26,55 @@ function adminTicketLabel(string $status): string {
     };
 }
 
+function adminAnswerStatusLabel(?string $status): string {
+    return match ($status) {
+        'ok' => 'Ổn',
+        'insufficient_context' => 'Thiếu dữ liệu',
+        'clarification_needed' => 'Cần hỏi rõ',
+        'blocked' => 'Bị chặn',
+        'error' => 'Lỗi',
+        default => $status ?: 'Chưa rõ',
+    };
+}
+
+function adminSenderLabel(string $sender): string {
+    return match ($sender) {
+        'user' => 'Sinh viên',
+        'assistant' => 'Bot',
+        'system' => 'Hệ thống',
+        'tool' => 'Công cụ',
+        default => $sender,
+    };
+}
+
+function adminStripUiIcons(string $value): string {
+    $value = preg_replace('/[\x{1F300}-\x{1FAFF}\x{2600}-\x{27BF}]/u', '', $value) ?? $value;
+    return trim(preg_replace('/[ \t]{2,}/u', ' ', $value) ?? $value);
+}
+
+function adminPlainMessage(?string $value): string {
+    $text = (string)$value;
+    $text = str_ireplace(['<br>', '<br/>', '<br />'], "\n", $text);
+    $text = str_replace(['TICKET_OFFER', 'TICKET_CONFIRM:', 'TICKET_TRIGGER:'], '', $text);
+    $text = html_entity_decode(strip_tags($text), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+    $text = adminStripUiIcons($text);
+    return trim(preg_replace("/\n{3,}/u", "\n\n", $text) ?? $text);
+}
+
+function adminSnippet(?string $value, int $limit = 120): string {
+    $text = preg_replace('/\s+/u', ' ', adminPlainMessage($value)) ?? '';
+    if (mb_strlen($text, 'UTF-8') <= $limit) {
+        return $text;
+    }
+    return rtrim(mb_substr($text, 0, $limit - 1, 'UTF-8')).'...';
+}
+
 // XÁC ĐỊNH TAB ĐANG HOẠT ĐỘNG (Mặc định là dashboard nếu không có tham số)
 $currentTab = $_GET['tab'] ?? 'dashboard';
 // =========================================================================
 // XỬ LÝ LỆNH TỪ GIAO DIỆN ADMIN
 // =========================================================================
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
+if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST' && isset($_POST['action'])) {
     $action = $_POST['action'];
     
     if ($action === 'add_source') {
@@ -251,6 +294,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
         header("Location: admin_dashboard.php?tab=tickets");
         exit;
     }
+    elseif ($action === 'close_ticket_only') {
+        $ticket_id = (int)$_POST['ticket_id'];
+        dbExecute($pdo, "UPDATE tickets SET status = 'closed', closed_at = NOW() WHERE id = ?", [$ticket_id]);
+        header("Location: admin_dashboard.php?tab=tickets");
+        exit;
+    }
 }
 
 // =========================================================================
@@ -262,7 +311,9 @@ $repliedTickets = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM tickets WHERE st
 $totalFaq = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM knowledge_articles WHERE verification_status = 'verified' AND deleted_at IS NULL");
 $pendingKnowledgeCount = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM knowledge_articles WHERE verification_status = 'pending' AND deleted_at IS NULL");
 
-$recentTickets = dbFetchAll($pdo, "
+// Filter ticket theo status
+$ticketStatusFilter = $_GET['ticket_status'] ?? 'all';
+$ticketSql = "
     SELECT
         id,
         ticket_number,
@@ -274,9 +325,16 @@ $recentTickets = dbFetchAll($pdo, "
         created_at,
         closed_at
     FROM tickets
-    ORDER BY created_at DESC
-    LIMIT 10
-");
+";
+$ticketParams = [];
+if ($ticketStatusFilter !== 'all') {
+    $ticketSql .= " WHERE status = ?";
+    $ticketParams[] = $ticketStatusFilter;
+}
+$ticketSql .= " ORDER BY FIELD(status,'open','in_progress','waiting_student','resolved','closed','cancelled'), created_at DESC LIMIT 100";
+$recentTickets = dbFetchAll($pdo, $ticketSql, $ticketParams);
+$newTicketCount = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM tickets WHERE status = 'open'");
+
 $knowledgeRows = dbFetchAll($pdo, "
     SELECT
         ka.id, ka.title, ka.category, ka.intent_code, ka.keywords, ka.answer_content,
@@ -295,6 +353,134 @@ $knowledgeSources = dbFetchAll($pdo, "
     ORDER BY is_official DESC, updated_at DESC, title ASC
 ");
 $students = appSafeStudentList($pdo);
+
+$logSearch = trim((string)($_GET['log_q'] ?? ''));
+$logIssueFilter = (string)($_GET['log_issue'] ?? 'all');
+if (!in_array($logIssueFilter, ['all', 'needs_review', 'ok'], true)) {
+    $logIssueFilter = 'all';
+}
+
+$totalChatSessions = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM chat_sessions");
+$totalChatMessages = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM chat_messages");
+$needsReviewMessages = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM chat_messages WHERE answer_status <> 'ok'");
+$unansweredQuestions = (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM unanswered_questions WHERE status IN ('new', 'reviewing')");
+
+$logWhere = ["1 = 1"];
+$logParams = [];
+if ($logSearch !== '') {
+    $like = '%'.$logSearch.'%';
+    $logWhere[] = "(
+        cs.title LIKE ?
+        OR u.full_name LIKE ?
+        OR sp.student_code LIKE ?
+        OR EXISTS (
+            SELECT 1
+            FROM chat_messages cm_search
+            WHERE cm_search.session_id = cs.id
+              AND cm_search.content LIKE ?
+        )
+    )";
+    array_push($logParams, $like, $like, $like, $like);
+}
+if ($logIssueFilter === 'needs_review') {
+    $logWhere[] = "EXISTS (
+        SELECT 1
+        FROM chat_messages cm_issue
+        WHERE cm_issue.session_id = cs.id
+          AND cm_issue.answer_status <> 'ok'
+    )";
+} elseif ($logIssueFilter === 'ok') {
+    $logWhere[] = "NOT EXISTS (
+        SELECT 1
+        FROM chat_messages cm_issue
+        WHERE cm_issue.session_id = cs.id
+          AND cm_issue.answer_status <> 'ok'
+    )";
+}
+
+$chatLogSessions = dbFetchAll($pdo, "
+    SELECT
+        cs.id,
+        cs.session_uuid,
+        cs.title,
+        cs.status,
+        cs.started_at,
+        cs.last_activity_at,
+        u.full_name,
+        sp.student_code,
+        COUNT(cm.id) AS message_count,
+        SUM(CASE WHEN cm.sender_type = 'user' THEN 1 ELSE 0 END) AS user_message_count,
+        SUM(CASE WHEN cm.sender_type = 'assistant' THEN 1 ELSE 0 END) AS bot_message_count,
+        SUM(CASE WHEN cm.answer_status <> 'ok' THEN 1 ELSE 0 END) AS issue_count,
+        MAX(cm.created_at) AS last_message_at,
+        (
+            SELECT cmu.content
+            FROM chat_messages cmu
+            WHERE cmu.session_id = cs.id AND cmu.sender_type = 'user'
+            ORDER BY cmu.created_at DESC, cmu.id DESC
+            LIMIT 1
+        ) AS last_user_message,
+        (
+            SELECT cma.content
+            FROM chat_messages cma
+            WHERE cma.session_id = cs.id AND cma.sender_type = 'assistant'
+            ORDER BY cma.created_at DESC, cma.id DESC
+            LIMIT 1
+        ) AS last_bot_message
+    FROM chat_sessions cs
+    LEFT JOIN users u ON u.id = cs.user_id
+    LEFT JOIN student_profiles sp ON sp.user_id = u.id
+    LEFT JOIN chat_messages cm ON cm.session_id = cs.id
+    WHERE ".implode(' AND ', $logWhere)."
+    GROUP BY cs.id, cs.session_uuid, cs.title, cs.status, cs.started_at, cs.last_activity_at, u.full_name, sp.student_code
+    ORDER BY COALESCE(MAX(cm.created_at), cs.last_activity_at) DESC, cs.id DESC
+    LIMIT 80
+", $logParams);
+
+$selectedLogSessionId = (int)($_GET['log_session'] ?? 0);
+if ($selectedLogSessionId <= 0 && !empty($chatLogSessions)) {
+    $selectedLogSessionId = (int)$chatLogSessions[0]['id'];
+}
+
+$selectedChatSession = null;
+$selectedChatMessages = [];
+$selectedRelatedTickets = [];
+if ($selectedLogSessionId > 0) {
+    $selectedChatSession = dbFetchOne($pdo, "
+        SELECT
+            cs.*,
+            u.full_name,
+            sp.student_code
+        FROM chat_sessions cs
+        LEFT JOIN users u ON u.id = cs.user_id
+        LEFT JOIN student_profiles sp ON sp.user_id = u.id
+        WHERE cs.id = ?
+        LIMIT 1
+    ", [$selectedLogSessionId]);
+
+    if ($selectedChatSession) {
+        $selectedChatMessages = dbFetchAll($pdo, "
+            SELECT
+                cm.*,
+                DATE_FORMAT(cm.created_at, '%H:%i %d/%m/%Y') AS created_label,
+                (
+                    SELECT GROUP_CONCAT(CONCAT(cf.rating, IFNULL(CONCAT(':', cf.reason_code), '')) SEPARATOR ', ')
+                    FROM chat_feedback cf
+                    WHERE cf.message_id = cm.id
+                ) AS feedback_summary
+            FROM chat_messages cm
+            WHERE cm.session_id = ?
+            ORDER BY cm.created_at ASC, cm.id ASC
+        ", [$selectedLogSessionId]);
+
+        $selectedRelatedTickets = dbFetchAll($pdo, "
+            SELECT id, ticket_number, status, created_at
+            FROM tickets
+            WHERE source_chat_session_id = ?
+            ORDER BY created_at DESC
+        ", [$selectedLogSessionId]);
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -364,27 +550,60 @@ $students = appSafeStudentList($pdo);
         </div>
 
         <div id="tab-tickets" class="tab-content <?php echo $currentTab === 'tickets' ? 'active' : ''; ?>">
-            <div class="page-title"><span>Quản lý Phiếu hỗ trợ (Tickets)</span></div>
+            <div class="page-title">
+                <span>Quản lý Phiếu hỗ trợ (Tickets)
+                    <?php if ($newTicketCount > 0): ?>
+                    <span class="badge open" style="font-size:12px; padding:3px 10px; vertical-align:middle;"><?php echo $newTicketCount; ?> mới</span>
+                    <?php endif; ?>
+                </span>
+                <!-- Filter theo status -->
+                <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                    <?php
+                    $filterLabels = [
+                        'all'            => 'Tất cả',
+                        'open'           => 'Mới',
+                        'in_progress'    => 'Đang xử lý',
+                        'waiting_student'=> 'Đã phản hồi',
+                        'resolved'       => 'Đã giải quyết',
+                        'closed'         => 'Đã đóng',
+                    ];
+                    foreach ($filterLabels as $val => $label):
+                        $active = $ticketStatusFilter === $val ? 'btn' : 'btn btn-outline';
+                    ?>
+                    <a href="admin_dashboard.php?tab=tickets&ticket_status=<?php echo $val; ?>" class="<?php echo $active; ?>" style="padding:5px 14px; font-size:13px; text-decoration:none;"><?php echo $label; ?></a>
+                    <?php endforeach; ?>
+                </div>
+            </div>
             <div class="table-container">
                 <table>
                     <thead><tr><th>Mã/Ngày</th><th>Sinh viên (MSSV)</th><th>Nội dung câu hỏi</th><th>Trạng thái</th><th>Hành động</th></tr></thead>
                     <tbody>
+                        <?php if (empty($recentTickets)): ?>
+                        <tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:30px;">Không có ticket nào.</td></tr>
+                        <?php endif; ?>
                         <?php foreach($recentTickets as $t): ?>
                         <tr>
                             <td><b>#<?php echo (int)$t['id']; ?></b><br><span style="color:var(--text-muted); font-size:12px;"><?php echo date('d/m H:i', strtotime($t['created_at'])); ?></span></td>
                             <td><?php echo h($t['student_name']); ?><br><span style="color:var(--text-muted); font-size:12px;"><?php echo h($t['mssv']); ?></span></td>
-                            <td style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><?php echo h($t['content']); ?></td>
+                            <td style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;"><?php echo h($t['content']); ?></td>
                             <td><span class="badge <?php echo h($t['status']); ?>"><?php echo h(adminTicketLabel($t['status'])); ?></span></td>
-                            <td>
+                            <td style="white-space:nowrap;">
                                 <button class="btn <?php echo in_array($t['status'], ['open', 'in_progress'], true) ? '' : 'btn-outline'; ?>"
                                         data-ticket-id="<?php echo (int)$t['id']; ?>"
                                         data-student-name="<?php echo h($t['student_name']); ?>"
                                         data-content="<?php echo h($t['content']); ?>"
                                         onclick="openReplyModalFromButton(this)">
-                                    <?php echo in_array($t['status'], ['open', 'in_progress'], true) ? 'Trả lời' : 'Xem lại'; ?>
+                                    <?php echo in_array($t['status'], ['open', 'in_progress'], true) ? 'Trả lời' : 'Xem'; ?>
                                 </button>
-                            </td>
-                        </tr>
+                                <?php if ($t['status'] !== 'closed'): ?>
+                                 <form method="POST" action="admin_dashboard.php?tab=tickets" style="display:inline-block; margin:0;">
+                                     <input type="hidden" name="action" value="close_ticket_only">
+                                     <input type="hidden" name="ticket_id" value="<?php echo (int)$t['id']; ?>">
+                                     <button type="submit" class="btn" style="background:#d32f2f; margin-left:4px; padding:5px 10px; font-size:12px;" onclick="return confirm('Đóng ticket này?')">Đóng</button>
+                                 </form>
+                                 <?php endif; ?>
+                             </td>
+                         </tr>
                         <?php endforeach; ?>
                     </tbody>
                 </table>
@@ -536,7 +755,125 @@ $students = appSafeStudentList($pdo);
 
         <div id="tab-logs" class="tab-content <?php echo $currentTab === 'logs' ? 'active' : ''; ?>">
             <div class="page-title"><span>Lịch sử trò chuyện Sinh viên - Bot</span></div>
-            <p style="color: var(--text-muted); text-align: center; margin-top: 50px;">Tính năng đang được nâng cấp...</p>
+
+            <div class="stats-grid log-stats">
+                <div class="stat-card"><div class="stat-title">Phiên chat</div><div class="stat-value"><?php echo $totalChatSessions; ?></div></div>
+                <div class="stat-card"><div class="stat-title">Tin nhắn đã lưu</div><div class="stat-value"><?php echo $totalChatMessages; ?></div></div>
+                <div class="stat-card danger"><div class="stat-title">Cần xem lại</div><div class="stat-value"><?php echo $needsReviewMessages; ?></div></div>
+                <div class="stat-card success"><div class="stat-title">Câu chưa có dữ liệu</div><div class="stat-value"><?php echo $unansweredQuestions; ?></div></div>
+            </div>
+
+            <div class="table-container log-filter-panel">
+                <form method="GET" action="admin_dashboard.php" class="log-filter-form">
+                    <input type="hidden" name="tab" value="logs">
+                    <input class="faq-input" type="text" name="log_q" value="<?php echo h($logSearch); ?>" placeholder="Tìm theo tên, MSSV hoặc nội dung chat">
+                    <select class="faq-input" name="log_issue">
+                        <option value="all" <?php echo $logIssueFilter === 'all' ? 'selected' : ''; ?>>Tất cả trạng thái</option>
+                        <option value="needs_review" <?php echo $logIssueFilter === 'needs_review' ? 'selected' : ''; ?>>Có câu cần xem lại</option>
+                        <option value="ok" <?php echo $logIssueFilter === 'ok' ? 'selected' : ''; ?>>Chỉ phiên ổn</option>
+                    </select>
+                    <button class="btn" type="submit">Lọc</button>
+                    <a class="btn btn-outline" href="admin_dashboard.php?tab=logs">Xóa lọc</a>
+                </form>
+            </div>
+
+            <div class="log-layout">
+                <div class="table-container log-session-panel">
+                    <h3>Phiên gần đây</h3>
+                    <div class="log-session-list">
+                        <?php if (empty($chatLogSessions)): ?>
+                            <div class="log-empty">Chưa có phiên chat phù hợp.</div>
+                        <?php endif; ?>
+                        <?php foreach ($chatLogSessions as $session): ?>
+                            <?php
+                                $sessionUrl = 'admin_dashboard.php?'.http_build_query([
+                                    'tab' => 'logs',
+                                    'log_session' => (int)$session['id'],
+                                    'log_q' => $logSearch,
+                                    'log_issue' => $logIssueFilter,
+                                ]);
+                                $lastAt = $session['last_message_at'] ?: $session['last_activity_at'];
+                                $studentName = trim((string)($session['full_name'] ?? '')) ?: 'Khách truy cập';
+                                $studentCode = trim((string)($session['student_code'] ?? '')) ?: 'Chưa gắn MSSV';
+                                $preview = adminSnippet($session['last_user_message'] ?: $session['title'], 110);
+                            ?>
+                            <a class="log-session-item <?php echo (int)$session['id'] === $selectedLogSessionId ? 'active' : ''; ?>" href="<?php echo h($sessionUrl); ?>">
+                                <div class="log-session-top">
+                                    <b><?php echo h($studentName); ?></b>
+                                    <span><?php echo $lastAt ? h(date('d/m H:i', strtotime($lastAt))) : ''; ?></span>
+                                </div>
+                                <div class="log-session-meta">
+                                    <?php echo h($studentCode); ?> · <?php echo (int)$session['message_count']; ?> tin nhắn
+                                </div>
+                                <div class="log-session-preview"><?php echo h($preview ?: 'Chưa có câu hỏi.'); ?></div>
+                                <?php if ((int)$session['issue_count'] > 0): ?>
+                                    <span class="badge insufficient_context"><?php echo (int)$session['issue_count']; ?> cần xem lại</span>
+                                <?php endif; ?>
+                            </a>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
+                <div class="table-container log-transcript-panel">
+                    <?php if (!$selectedChatSession): ?>
+                        <h3>Nội dung cuộc trò chuyện</h3>
+                        <div class="log-empty">Chọn một phiên chat để xem chi tiết.</div>
+                    <?php else: ?>
+                        <?php
+                            $selectedName = trim((string)($selectedChatSession['full_name'] ?? '')) ?: 'Khách truy cập';
+                            $selectedCode = trim((string)($selectedChatSession['student_code'] ?? '')) ?: 'Chưa gắn MSSV';
+                        ?>
+                        <div class="log-transcript-head">
+                            <div>
+                                <h3><?php echo h($selectedName); ?></h3>
+                                <p><?php echo h($selectedCode); ?> · Bắt đầu <?php echo h(date('d/m/Y H:i', strtotime($selectedChatSession['started_at']))); ?></p>
+                            </div>
+                            <span class="badge <?php echo h($selectedChatSession['status']); ?>"><?php echo h($selectedChatSession['status']); ?></span>
+                        </div>
+
+                        <?php if (!empty($selectedRelatedTickets)): ?>
+                            <div class="related-ticket-row">
+                                <span>Ticket liên quan:</span>
+                                <?php foreach ($selectedRelatedTickets as $ticket): ?>
+                                    <a href="admin_dashboard.php?tab=tickets" class="badge <?php echo h($ticket['status']); ?>">
+                                        <?php echo h($ticket['ticket_number']); ?> · <?php echo h(adminTicketLabel($ticket['status'])); ?>
+                                    </a>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
+
+                        <div class="log-thread">
+                            <?php if (empty($selectedChatMessages)): ?>
+                                <div class="log-empty">Phiên này chưa có tin nhắn.</div>
+                            <?php endif; ?>
+                            <?php foreach ($selectedChatMessages as $msg): ?>
+                                <?php
+                                    $plainContent = adminPlainMessage($msg['content'] ?? '');
+                                    $metaParts = [];
+                                    if (!empty($msg['detected_intent'])) $metaParts[] = 'Intent: '.$msg['detected_intent'];
+                                    if (!empty($msg['model_name'])) $metaParts[] = 'Model: '.$msg['model_name'];
+                                    if ($msg['latency_ms'] !== null) $metaParts[] = 'Latency: '.(int)$msg['latency_ms'].'ms';
+                                    if ($msg['confidence_score'] !== null) $metaParts[] = 'Tin cậy: '.number_format((float)$msg['confidence_score'], 2);
+                                    if (!empty($msg['feedback_summary'])) $metaParts[] = 'Feedback: '.$msg['feedback_summary'];
+                                ?>
+                                <div class="log-message <?php echo h($msg['sender_type']); ?>">
+                                    <div class="log-message-meta">
+                                        <b><?php echo h(adminSenderLabel($msg['sender_type'])); ?></b>
+                                        <span><?php echo h($msg['created_label']); ?></span>
+                                        <?php if ($msg['sender_type'] === 'assistant'): ?>
+                                            <span class="badge <?php echo h($msg['answer_status']); ?>"><?php echo h(adminAnswerStatusLabel($msg['answer_status'])); ?></span>
+                                        <?php endif; ?>
+                                    </div>
+                                    <div class="log-message-content"><?php echo nl2br(h($plainContent !== '' ? $plainContent : '(Nội dung trống)')); ?></div>
+                                    <?php if (!empty($metaParts)): ?>
+                                        <div class="log-message-foot"><?php echo h(implode(' · ', $metaParts)); ?></div>
+                                    <?php endif; ?>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    <?php endif; ?>
+                </div>
+            </div>
         </div>
     </div>
     
@@ -545,7 +882,7 @@ $students = appSafeStudentList($pdo);
     <div class="modal-box" style="width: 750px; max-height: 90vh; overflow-y: auto;">
         <div class="modal-header">
             <h3 style="margin-bottom: 20px;">Cấp tài khoản mới</h3>
-            <div class="modal-close-btn" onclick="closeModal('addUserModal')">&times;</div>
+            <div class="modal-close-btn" onclick="closeModal('addUserModal')">Đóng</div>
         </div>
         <form method="POST" action="admin_dashboard.php">
             <input type="hidden" name="action" value="add_user">
@@ -621,44 +958,275 @@ $students = appSafeStudentList($pdo);
         </form>
     </div>
 </div>
-    <style>
-    .chat-history { background: #121416; border: 1px solid #2c3138; border-radius: 4px; height: 250px; overflow-y: auto; padding: 15px; margin-bottom: 15px; display: flex; flex-direction: column; gap: 10px; }
-    .msg-bubble { max-width: 80%; padding: 10px 15px; border-radius: 8px; font-size: 14px; line-height: 1.4; }
-    .msg-student { background: #2c3138; color: white; align-self: flex-start; border-bottom-left-radius: 0; }
-    .msg-admin { background: rgba(0, 188, 212, 0.15); border: 1px solid var(--accent-teal); color: white; align-self: flex-end; border-bottom-right-radius: 0; }
-    .msg-time { font-size: 11px; color: gray; margin-top: 5px; text-align: right; }
+<style>
+/* ===== ADMIN REPLY TICKET MODAL - REDESIGN ===== */
+.rtm-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+    backdrop-filter: blur(4px);
+    z-index: 2000;
+    align-items: center;
+    justify-content: center;
+    animation: rtmFadeIn .2s ease;
+}
+.rtm-overlay.active { display: flex; }
+@keyframes rtmFadeIn { from { opacity:0 } to { opacity:1 } }
+
+.rtm-box {
+    background: #fff;
+    border-radius: 16px;
+    width: 96%;
+    max-width: 660px;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    animation: rtmSlideUp .25s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes rtmSlideUp {
+    from { transform: translateY(24px) scale(.97); opacity:0 }
+    to   { transform: translateY(0)   scale(1);   opacity:1 }
+}
+
+/* Header */
+.rtm-header {
+    background: linear-gradient(135deg, #007976 0%, #00b5ad 100%);
+    padding: 18px 22px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+    position: relative;
+}
+.rtm-header-info { flex: 1; min-width: 0; }
+.rtm-header-title {
+    color: #fff;
+    font-size: 16px;
+    font-weight: 700;
+    margin: 0 0 2px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.rtm-header-meta {
+    color: rgba(255,255,255,0.8);
+    font-size: 12px;
+    margin: 0;
+}
+.rtm-close {
+    height: 34px;
+    padding: 0 12px;
+    background: rgba(255,255,255,0.18);
+    border: 1.5px solid rgba(255,255,255,0.3);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: background .18s;
+    flex-shrink: 0;
+}
+.rtm-close:hover {
+    background: rgba(255,255,255,0.32);
+}
+
+/* Thread */
+.rtm-thread {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 22px;
+    background: #f6f8fb;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: 200px;
+    max-height: 340px;
+}
+.rtm-thread::-webkit-scrollbar { width: 5px; }
+.rtm-thread::-webkit-scrollbar-track { background: transparent; }
+.rtm-thread::-webkit-scrollbar-thumb { background: #ccc; border-radius: 4px; }
+
+.rtm-bubble {
+    max-width: 75%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 14px;
+    line-height: 1.55;
+    position: relative;
+    word-break: break-word;
+}
+.rtm-bubble-label {
+    font-size: 10.5px;
+    font-weight: 700;
+    margin-bottom: 4px;
+    opacity: .7;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+}
+.rtm-bubble-time {
+    font-size: 10.5px;
+    margin-top: 5px;
+    opacity: .5;
+    text-align: right;
+}
+/* SV bubble – trái */
+.rtm-bubble.sv {
+    background: #fff;
+    border: 1px solid #e8ecf0;
+    border-bottom-left-radius: 4px;
+    align-self: flex-start;
+    box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    color: #1e2329;
+}
+.rtm-bubble.sv .rtm-bubble-label { color: #007976; }
+/* Admin bubble – phải */
+.rtm-bubble.admin {
+    background: linear-gradient(135deg, #007976, #009e96);
+    color: #fff;
+    border-bottom-right-radius: 4px;
+    align-self: flex-end;
+    box-shadow: 0 2px 8px rgba(0,121,118,.25);
+}
+.rtm-bubble.admin .rtm-bubble-label { color: rgba(255,255,255,.75); }
+.rtm-bubble.admin .rtm-bubble-time { color: rgba(255,255,255,.6); }
+/* Banner câu hỏi gốc */
+.rtm-origin-banner {
+    background: linear-gradient(135deg, #fffbeb, #fff8e1);
+    border: 1px solid #fdd835;
+    border-left: 4px solid #f9a825;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #5d4037;
+}
+.rtm-loading-msg {
+    text-align: center;
+    padding: 30px;
+    color: #aaa;
+    font-size: 14px;
+}
+
+/* Footer */
+.rtm-footer {
+    padding: 16px 22px;
+    background: #fff;
+    border-top: 1px solid #edf0f4;
+    flex-shrink: 0;
+}
+.rtm-textarea {
+    width: 100%;
+    min-height: 80px;
+    max-height: 160px;
+    border: 1.5px solid #dce0e8;
+    border-radius: 10px;
+    padding: 12px 14px;
+    font-size: 14px;
+    font-family: inherit;
+    resize: vertical;
+    transition: border-color .2s, box-shadow .2s;
+    color: #1e2329;
+    background: #fafbfc;
+    box-sizing: border-box;
+}
+.rtm-textarea:focus {
+    outline: none;
+    border-color: #007976;
+    box-shadow: 0 0 0 3px rgba(0,121,118,.12);
+    background: #fff;
+}
+.rtm-footer-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 12px;
+    gap: 10px;
+}
+.rtm-close-check-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13px;
+    color: #d32f2f;
+    cursor: pointer;
+    user-select: none;
+}
+.rtm-close-check-label input[type=checkbox] {
+    width: 16px; height: 16px;
+    accent-color: #d32f2f;
+    cursor: pointer;
+}
+.rtm-send-btn {
+    display: flex; align-items: center; gap: 7px;
+    background: linear-gradient(135deg, #007976, #009e96);
+    color: #fff;
+    border: none;
+    padding: 10px 22px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform .15s, box-shadow .15s;
+    box-shadow: 0 2px 8px rgba(0,121,118,.3);
+    white-space: nowrap;
+}
+.rtm-send-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 14px rgba(0,121,118,.4);
+}
+.rtm-closed-notice {
+    display: none;
+    text-align: center;
+    padding: 14px 20px;
+    background: #fff3f3;
+    border: 1px solid #ffcdd2;
+    border-radius: 8px;
+    color: #c62828;
+    font-size: 13px;
+    font-weight: 500;
+}
 </style>
 
-<div class="modal-overlay" id="replyTicketModal">
-    <div class="modal-box" style="width: 650px;">
-        <div class="modal-header">
-            <h3 id="reply_ticket_id_title" style="color: var(--blue);"></h3>
-            <div class="modal-close-btn" onclick="closeModal('replyTicketModal')">&times;</div>
+<div class="rtm-overlay" id="replyTicketModal">
+    <div class="rtm-box">
+        <!-- Header -->
+        <div class="rtm-header">
+            <div class="rtm-header-info">
+                <p class="rtm-header-title" id="reply_ticket_id_title">Ticket hỗ trợ</p>
+                <p class="rtm-header-meta">Lịch sử trao đổi với: <b id="reply_student_name" style="color:#fff;"></b></p>
+            </div>
+            <button class="rtm-close" onclick="closeModal('replyTicketModal')" title="Đóng">Đóng</button>
         </div>
-        
-        <div style="font-size: 13px; color: gray; margin-bottom: 5px;">Lịch sử trao đổi với: <b id="reply_student_name" style="color: white;"></b></div>
-        <div class="chat-history" id="chatHistoryBox">
-            </div>
 
-        <form method="POST" action="admin_dashboard.php" id="replyForm">
-            <input type="hidden" name="action" value="reply_ticket">
-            <input type="hidden" name="ticket_id" id="reply_ticket_id">
-            
-            <div id="replyArea">
-                <textarea name="admin_reply" class="faq-input" style="height: 80px; resize: none;" placeholder="Nhập câu trả lời của bạn..." required></textarea>
-                
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px;">
-                    <label style="color: var(--danger); cursor: pointer; display: flex; align-items: center; gap: 5px;">
-                        <input type="checkbox" name="close_ticket" value="1" style="width: 16px; height: 16px;"> Đóng Ticket này (Sinh viên không thể reply thêm)
-                    </label>
-                    <button type="submit" class="btn">Gửi phản hồi</button>
+        <!-- Thread -->
+        <div class="rtm-thread" id="chatHistoryBox">
+            <div class="rtm-loading-msg">Đang tải...</div>
+        </div>
+
+        <!-- Footer -->
+        <div class="rtm-footer">
+            <form method="POST" action="admin_dashboard.php" id="replyForm">
+                <input type="hidden" name="action" value="reply_ticket">
+                <input type="hidden" name="ticket_id" id="reply_ticket_id">
+
+                <div id="replyArea">
+                    <textarea name="admin_reply" class="rtm-textarea" placeholder="Nhập phản hồi của bạn cho sinh viên..." required></textarea>
+                    <div class="rtm-footer-actions">
+                        <label class="rtm-close-check-label">
+                            <input type="checkbox" name="close_ticket" value="1">
+                            <span>Đóng ticket sau khi gửi</span>
+                        </label>
+                        <button type="submit" class="rtm-send-btn">Gửi phản hồi</button>
+                    </div>
                 </div>
-            </div>
-            
-            <div id="closedNotice" style="display: none; text-align: center; color: var(--danger); font-style: italic; padding: 15px; background: rgba(255, 77, 77, 0.1); border-radius: 4px;">
-                🔒 Ticket này đã được đóng.
-            </div>
-        </form>
+
+                <div id="closedNotice" class="rtm-closed-notice">
+                    Ticket này đã được đóng. Không thể gửi thêm phản hồi.
+                </div>
+            </form>
+        </div>
     </div>
 </div>
 
@@ -689,71 +1257,61 @@ $students = appSafeStudentList($pdo);
     }
 
     function openReplyModal(ticket_id, student_name, original_content) {
-        // Điền thông tin cơ bản
-        document.getElementById('reply_ticket_id_title').innerText = '#' + ticket_id;
+        document.getElementById('reply_ticket_id_title').innerText = 'Ticket #' + ticket_id;
         document.getElementById('reply_ticket_id').value = ticket_id;
         document.getElementById('reply_student_name').innerText = student_name;
-        
         let chatBox = document.getElementById('chatHistoryBox');
-        chatBox.innerHTML = '<div style="text-align: center; margin-top: 50px; color: gray;">Đang tải tin nhắn...</div>';
-        
-        // Mở popup lên trước cho đẹp
+        chatBox.innerHTML = '<div class="rtm-loading-msg">Đang tải lịch sử trao đổi...</div>';
         document.getElementById('replyTicketModal').classList.add('active');
-
-        // Gọi API kéo lịch sử tin nhắn về
         fetch('../api/get_ticket_chat.php?id=' + ticket_id)
         .then(res => res.json())
         .then(data => {
-            chatBox.innerHTML = ''; // Xóa chữ Đang tải đi
-            
-            // 1. In câu hỏi gốc của sinh viên (màu xám tối)
-            let firstMsg = `<div class="msg-bubble msg-student">
-                                <div style="font-size: 11px; opacity: 0.7; margin-bottom: 3px; color: #ffeb3b;">📌 Câu hỏi ban đầu</div>
-                                <div>${original_content}</div>
-                            </div>`;
-            chatBox.innerHTML += firstMsg;
-
-            // 2. Đổ lịch sử chat qua lại (nếu có)
-            if(data.success && data.messages.length > 0) {
+            chatBox.innerHTML = '';
+            if (original_content) {
+                let banner = document.createElement('div');
+                banner.className = 'rtm-origin-banner';
+                banner.innerHTML = '<div><b style="display:block;margin-bottom:3px;color:#5d4037;">Câu hỏi ban đầu</b>' + escapeAdminHtml(original_content) + '</div>';
+                chatBox.appendChild(banner);
+            }
+            if(data.success && data.messages && data.messages.length > 0) {
                 data.messages.forEach(msg => {
                     let isAdmin = msg.sender_role === 'admin';
-                    let bubbleClass = isAdmin ? 'msg-admin' : 'msg-student';
-                    let senderName = isAdmin ? 'Admin UTH' : student_name;
-                    
-                    let html = `<div class="msg-bubble ${bubbleClass}">
-                                    <div style="font-size: 11px; opacity: 0.7; margin-bottom: 3px;"><b>${senderName}</b></div>
-                                    <div>${msg.message}</div>
-                                    <div class="msg-time">${msg.time_str}</div>
-                                </div>`;
-                    chatBox.innerHTML += html;
+                    let bubble = document.createElement('div');
+                    bubble.className = 'rtm-bubble ' + (isAdmin ? 'admin' : 'sv');
+                    let msgText = escapeAdminHtml(msg.message).replace(/\r?\n/g, '<br>');
+                    bubble.innerHTML =
+                        '<div class="rtm-bubble-label">' + (isAdmin ? 'Admin UTH' : escapeAdminHtml(student_name)) + '</div>' +
+                        '<div>' + msgText + '</div>' +
+                        '<div class="rtm-bubble-time">' + escapeAdminHtml(msg.time_str || '') + '</div>';
+                    chatBox.appendChild(bubble);
                 });
+            } else if (!original_content) {
+                chatBox.innerHTML = '<div class="rtm-loading-msg">Chưa có tin nhắn nào.</div>';
             }
-            
-            // Tự động cuộn khung chat xuống tin nhắn mới nhất
             chatBox.scrollTop = chatBox.scrollHeight;
-
-            // 3. Xử lý khóa mõ... à nhầm, khóa form nhập nếu Ticket đã bị đóng
             let replyArea = document.getElementById('replyArea');
             let closedNotice = document.getElementById('closedNotice');
             if(data.is_closed == 1) {
-                replyArea.style.display = 'none'; // Giấu chỗ nhập chữ
-                closedNotice.style.display = 'block'; // Hiện cảnh báo đỏ
+                replyArea.style.display = 'none';
+                closedNotice.style.display = 'block';
             } else {
                 replyArea.style.display = 'block';
                 closedNotice.style.display = 'none';
             }
         })
         .catch(err => {
-            chatBox.innerHTML = '<div style="color: red; text-align: center;">Lỗi tải tin nhắn! Vui lòng thử lại.</div>';
+            chatBox.innerHTML = '<div class="rtm-loading-msg" style="color:#e53935;">Lỗi tải tin nhắn.</div>';
         });
+    }
+    function escapeAdminHtml(str) {
+        return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;');
     }
     </script>
 
     <div class="modal-overlay" id="studentDetailModal">
         <div class="modal-box">
-            <div class="modal-close-btn" onclick="closeModal('studentDetailModal')">&times;</div>
+            <div class="modal-close-btn" onclick="closeModal('studentDetailModal')">Đóng</div>
             <h3 style="margin-bottom: 20px; color: var(--blue);">Thông tin chi tiết</h3>
-        </div>
         
         <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 15px;">
             <div class="info-item"><div class="info-label" style="color: gray; font-size: 13px;">MSSV</div><div id="dt_mssv" style="font-weight: bold; font-size: 15px;"></div></div>
@@ -775,7 +1333,7 @@ $students = appSafeStudentList($pdo);
 <!-- Admin Profile Modal -->
 <div id="adminProfileModal" class="modal-overlay">
   <div class="modal-box" style="max-width: 400px; text-align: center;">
-    <div class="modal-close-btn" onclick="closeAdminProfileModal()">&times;</div>
+    <div class="modal-close-btn" onclick="closeAdminProfileModal()">Đóng</div>
     <div class="avatar" style="width: 80px; height: 80px; font-size: 32px; margin: 0 auto 20px;">
        <?php $n=trim($_SESSION['ho_ten']??'A'); echo htmlspecialchars(mb_strtoupper(mb_substr($n,mb_strpos($n,' ')!==false?mb_strrpos($n,' ')+1:0,1,'UTF-8'),'UTF-8'),ENT_QUOTES,'UTF-8'); ?>
     </div>
@@ -792,7 +1350,7 @@ $students = appSafeStudentList($pdo);
 <!-- Admin Settings Modal -->
 <div id="adminSettingsModal" class="modal-overlay">
   <div class="modal-box" style="max-width: 450px;">
-    <div class="modal-close-btn" onclick="closeAdminSettingsModal()">&times;</div>
+    <div class="modal-close-btn" onclick="closeAdminSettingsModal()">Đóng</div>
     <h3 style="margin-bottom: 20px; font-size: 18px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 15px;">Cài đặt hệ thống</h3>
     <div style="margin-bottom: 15px;">
       <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 15px;">
@@ -860,7 +1418,7 @@ $students = appSafeStudentList($pdo);
 <div class="modal-overlay" id="editUserModal">
     <div class="modal-box" style="width: 750px; max-height: 90vh; overflow-y: auto;">
         <h3 style="margin-bottom: 20px;">Chỉnh sửa thông tin Sinh viên</h3>
-        <div class="modal-close-btn" onclick="closeModal('editUserModal')">&times;</div>
+        <div class="modal-close-btn" onclick="closeModal('editUserModal')">Đóng</div>
         <form method="POST" action="admin_dashboard.php">
             <input type="hidden" name="action" value="edit_user">
             <input type="hidden" name="mssv" id="edit_mssv_hidden"> 

@@ -98,7 +98,16 @@ function detectEntities(string $message, ?array $student): array {
 function classifyQuestion(string $message): array {
     $norm = appNormalizeText($message);
 
-    if (appContainsAny($norm, ['ho tro truc tuyen', 'can ho tro', 'ticket ho tro', 'tao ticket', 'gui yeu cau ho tro'])) {
+    if (appContainsAny($norm, [
+        'tao ticket', 'gui ticket', 'ticket ho tro', 'gui yeu cau ho tro',
+        'nho admin', 'viet ticket', 'tao phieu', 'gui phieu ho tro',
+        'can admin xu ly', 'lien he admin', 'can gap admin',
+        'gui yeu cau', 'dat cau hoi cho admin',
+    ])) {
+        return ['class' => 'create_ticket', 'intent' => 'create_ticket'];
+    }
+
+    if (appContainsAny($norm, ['ho tro truc tuyen', 'can ho tro', 'ticket ho tro'])) {
         return ['class' => 'portal_navigation', 'intent' => 'nav_support'];
     }
 
@@ -706,6 +715,25 @@ try {
         'Mình chưa tìm thấy thông tin đủ chính xác trong hệ thống. Bạn có thể cung cấp thêm học kỳ, năm học hoặc tạo ticket hỗ trợ.'
     );
 
+    // Xử lý intent tạo ticket trực tiếp
+    if ($classification['class'] === 'create_ticket') {
+        if (!$student) {
+            $finish(
+                'Bạn cần đăng nhập bằng tài khoản sinh viên để tạo ticket hỗ trợ.',
+                ['Đăng nhập Portal'],
+                'blocked',
+                0.0
+            );
+        }
+        $finish(
+            'TICKET_CONFIRM:' . $userMessage,
+            [],
+            'ok',
+            1.0,
+            'deterministic'
+        );
+    }
+
     if ($classification['class'] === 'portal_navigation') {
         [$reply, $suggestions] = buildPortalNavigationReply($pdo, $student, $classification['intent']);
         $finish($reply, $suggestions, 'ok', 1.0, 'database-navigation');
@@ -748,7 +776,7 @@ try {
         $modelName = 'deterministic';
         if (trim((string)$apiKey) !== '') {
             try {
-                $reply = callGemini($apiKey, $userMessage, "Bạn là ChatBot UTH. Trả lời thân thiện, ngắn gọn bằng tiếng Việt. Không bịa thông tin học vụ, không hỏi hoặc nhắc dữ liệu nhạy cảm.");
+                $reply = callGemini($apiKey, $userMessage, "Bạn là ChatBot UTH. Trả lời thân thiện, ngắn gọn bằng tiếng Việt. Không dùng emoji hoặc biểu tượng trang trí. Không bịa thông tin học vụ, không hỏi hoặc nhắc dữ liệu nhạy cảm.");
                 $modelName = 'gemini-2.5-flash-lite';
             } catch (Throwable $e) {
                 error_log('Gemini small talk: '.$e->getMessage());
@@ -760,7 +788,13 @@ try {
     [$selectedChunks, $retrievedRows, $threshold] = retrieveRagChunks($pdo, $userMessage, $classification['intent'], $entities, $student, $userMessageId);
     if (!$selectedChunks) {
         appLogUnanswered($pdo, $userMessageId, $userMessage, $classification['intent']);
-        $finish($fallbackMessage, ['Cung cấp thêm học kỳ', 'Cung cấp năm học', 'Tạo ticket hỗ trợ'], 'insufficient_context', 0.0);
+        // Trả về TICKET_OFFER để JS hiển thị nút mời tạo ticket
+        $finish(
+            $fallbackMessage . ' TICKET_OFFER',
+            ['Tạo ticket hỗ trợ', 'Cung cấp thêm học kỳ', 'Cung cấp năm học'],
+            'insufficient_context',
+            0.0
+        );
     }
 
     $contextParts = [];
@@ -784,6 +818,7 @@ try {
         $systemPrompt = "Bạn là ChatBot UTH. Chỉ trả lời dựa trên CONTEXT đã kiểm duyệt bên dưới. "
             ."Nếu context không đủ, nói rằng chưa có thông tin đủ chính xác. "
             ."Không tự đoán về điểm, lịch học, lịch thi, học phí cá nhân. "
+            ."Không dùng emoji hoặc biểu tượng trang trí. "
             ."Không yêu cầu hoặc lặp lại CCCD, địa chỉ, password hash, hay toàn bộ hồ sơ sinh viên.\n\nCONTEXT:\n".$context;
         $answer = callGemini($apiKey, $userMessage, $systemPrompt);
         if ($answer === '') {

@@ -40,6 +40,9 @@ function setSpeechButtonState(button, isReading) {
     button.classList.toggle('is-reading', isReading);
     button.title = isReading ? "Dừng đọc" : "Nghe câu trả lời";
     button.setAttribute('aria-label', button.title);
+    if (button.dataset.action === 'speak') {
+        button.textContent = isReading ? "Dừng đọc" : "Nghe";
+    }
 }
 
 function stopSpeech() {
@@ -220,7 +223,7 @@ function startNewChat() {
     let name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
     document.getElementById("chatBody").innerHTML = `
       <div class="chat-msg bot">
-        Chào ${escapeHTML(name)}! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
+        Chào ${escapeHTML(name)}! Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
       </div>
       <div class="chat-suggestions" id="chatSuggestions">
         <button class="suggestion-chip" onclick="sendQuickMessage('Cho tôi xem kết quả học tập')">Xem điểm</button>
@@ -252,7 +255,7 @@ function loadChatSession(id) {
         let name = window.UTH_CONTEXT ? window.UTH_CONTEXT.studentFirstName : '';
         body.innerHTML = `
           <div class="chat-msg bot">
-            Chào ${escapeHTML(name)}! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
+            Chào ${escapeHTML(name)}! Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
           </div>
         `;
     }
@@ -389,11 +392,25 @@ async function sendMessage() {
         let typingElement = document.getElementById(typingId);
         if(typingElement) typingElement.remove();
 
-        // 4. BỘ LỌC TICKET
-        if (botReply.includes("TICKET_TRIGGER:")) {
-            let cleanReply = botReply.replace("TICKET_TRIGGER:", "").trim();
+        // 4. Xử lý prefix đặc biệt từ chatbot.php
+        if (botReply.startsWith('TICKET_CONFIRM:')) {
+            // SV chủ động muốn tạo ticket: hiển confirm inline
+            let topicText = botReply.replace('TICKET_CONFIRM:', '').trim();
+            appendMessage(
+                'Mình hiểu bạn muốn gửi yêu cầu hỗ trợ lên admin. Hãy xác nhận nội dung bên dưới nhé:',
+                'bot', null, true, botMeta
+            );
+            showTicketConfirm(topicText || text);
+        } else if (botReply.includes('TICKET_OFFER')) {
+            // Bot không biết: gợi ý tạo ticket
+            let cleanReply = botReply.replace(' TICKET_OFFER', '').trim();
             appendMessage(cleanReply, 'bot', null, true, botMeta);
-            saveMockTicket(text);
+            showTicketOffer(text);
+        } else if (botReply.includes('TICKET_TRIGGER:')) {
+            // Legacy fallback
+            let cleanReply = botReply.replace('TICKET_TRIGGER:', '').trim();
+            appendMessage(cleanReply, 'bot', null, true, botMeta);
+            showTicketConfirm(text);
         } else {
             appendMessage(botReply, 'bot', null, true, botMeta);
         }
@@ -413,6 +430,10 @@ function escapeHTML(value) {
         .replace(/>/g, "&gt;")
         .replace(/"/g, "&quot;")
         .replace(/'/g, "&#039;");
+}
+
+function stripUiIcons(value) {
+    return String(value || '').replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '').trim();
 }
 
 function renderBotSuggestions(suggestions) {
@@ -442,10 +463,11 @@ function appendMessage(msg, sender, id = null, save = false, meta = {}) {
     div.className = "chat-msg " + sender;
     if (id) div.id = id;
 
-    div.innerHTML = sender === 'user' ? escapeHTML(msg) : msg;
+    div.innerHTML = sender === 'user' ? escapeHTML(msg) : stripUiIcons(msg);
 
-    // Thêm menu tùy chọn cho tin nhắn của bot (trừ tin nhắn chào và typing)
-    if (sender === 'bot' && msg !== "..." && !msg.includes('👋 Mình là')) {
+    // Thêm thao tác cho tin nhắn của bot (trừ tin nhắn chào và typing)
+    const isGreeting = String(msg || '').includes('Mình là <strong>ChatBot UTH</strong>');
+    if (sender === 'bot' && msg !== "..." && !isGreeting) {
         let wrapper = document.createElement("div");
         wrapper.className = "bot-msg-wrapper";
         if (id) {
@@ -462,41 +484,43 @@ function appendMessage(msg, sender, id = null, save = false, meta = {}) {
 
         // Speak btn
         let speakBtn = document.createElement("button");
-        speakBtn.className = "bot-action-icon bot-speak-btn";
+        speakBtn.className = "bot-action-btn bot-speak-btn";
+        speakBtn.dataset.action = "speak";
         speakBtn.title = "Nghe câu trả lời";
         speakBtn.setAttribute("aria-label", "Nghe câu trả lời");
-        speakBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>`;
+        speakBtn.textContent = "Nghe";
         speakBtn.onclick = () => speakText(div.innerText, speakBtn);
 
         // Copy btn
         let copyBtn = document.createElement("button");
-        copyBtn.className = "bot-action-icon";
+        copyBtn.className = "bot-action-btn";
         copyBtn.title = "Sao chép";
-        copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+        copyBtn.textContent = "Sao chép";
         copyBtn.onclick = () => {
             navigator.clipboard.writeText(div.innerText);
-            copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="#007976" stroke-width="2"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+            copyBtn.textContent = "Đã chép";
             setTimeout(() => {
-                copyBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
+                copyBtn.textContent = "Sao chép";
             }, 2000);
         };
 
         // Good btn
         let goodBtn = document.createElement("button");
-        goodBtn.className = "bot-action-icon";
+        goodBtn.className = "bot-action-btn";
         goodBtn.title = "Hữu ích";
-        goodBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>`;
+        goodBtn.textContent = "Hữu ích";
         goodBtn.onclick = function() {
             this.style.color = "#007976";
+            this.textContent = "Đã ghi nhận";
             this.disabled = true;
             sendFeedback(messageId, 'up', 'helpful');
         };
 
         // Bad/Report btn
         let badBtn = document.createElement("button");
-        badBtn.className = "bot-action-icon";
+        badBtn.className = "bot-action-btn";
         badBtn.title = "Chưa chính xác";
-        badBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>`;
+        badBtn.textContent = "Báo lỗi";
         badBtn.onclick = function() {
             sendFeedback(messageId, 'down', 'incorrect');
             reportBotMessage(this, q, msg, true, messageId);
@@ -507,9 +531,9 @@ function appendMessage(msg, sender, id = null, save = false, meta = {}) {
         menuContainer.className = "bot-msg-menu-container";
 
         let moreBtn = document.createElement("button");
-        moreBtn.className = "bot-action-icon";
+        moreBtn.className = "bot-action-btn";
         moreBtn.title = "Tùy chọn";
-        moreBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1"></circle><circle cx="12" cy="5" r="1"></circle><circle cx="12" cy="19" r="1"></circle></svg>`;
+        moreBtn.textContent = "Thêm";
 
         let dropdown = document.createElement("div");
         dropdown.className = "bot-msg-dropdown";
@@ -528,6 +552,17 @@ function appendMessage(msg, sender, id = null, save = false, meta = {}) {
         infoItem.innerHTML = "Về câu trả lời này";
         infoItem.onclick = function() { alert("Câu trả lời được tự động sinh ra bởi AI ChatBot UTH.\nNếu bạn bấm nghe, giọng đọc là giọng AI được tạo tự động, không phải người thật.\nDữ liệu được cung cấp độc quyền từ hệ thống UTH Portal."); };
         dropdown.appendChild(infoItem);
+
+        // --- Mục Gửi yêu cầu hỗ trợ ---
+        let ticketItem = document.createElement("div");
+        ticketItem.className = "dropdown-item";
+        ticketItem.style.cssText = "border-top: 1px solid #eee; color: #007976; font-weight: 600;";
+        ticketItem.innerHTML = "Gửi yêu cầu hỗ trợ";
+        ticketItem.onclick = function() {
+            dropdown.classList.remove('show');
+            openTicketForm(q);
+        };
+        dropdown.appendChild(ticketItem);
 
         moreBtn.onclick = function(e) {
             e.stopPropagation();
@@ -579,6 +614,7 @@ async function reportBotMessage(item, question, answer, isIcon = false, messageI
     if (isIcon) {
         item.disabled = true;
         item.style.color = "#d9534f";
+        item.textContent = "Đã báo lỗi";
     } else {
         item.style.pointerEvents = "none";
         item.innerHTML = "Đã gửi báo cáo";
@@ -602,17 +638,118 @@ async function reportBotMessage(item, question, answer, isIcon = false, messageI
     }
 }
 
-function saveMockTicket(question) {
-    let tickets = JSON.parse(sessionStorage.getItem("mock_tickets")) || [];
-    let sName = (window.UTH_CONTEXT && window.UTH_CONTEXT.studentName) ? window.UTH_CONTEXT.studentName : "Sinh Viên";
-    tickets.push({
-        id: "TK-" + Math.floor(Math.random() * 10000),
-        student: sName,
-        question: question,
-        status: "Chưa xử lý"
-    });
-    sessionStorage.setItem("mock_tickets", JSON.stringify(tickets));
+// ==========================================
+// TICKET SYSTEM - Tạo ticket thực vào DB
+// ==========================================
+
+/**
+ * Gọi API tạo ticket vào DB, hiển thị thông báo kết quả trong chat.
+ */
+async function createRealTicket(subject, description) {
+    try {
+        const res = await fetch('../api/create_ticket.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subject, description })
+        });
+        const data = await res.json();
+        if (data.success) {
+            appendMessage(
+                `<strong>Ticket ${data.ticket_number} đã được gửi thành công!</strong><br>` +
+                `Admin UTH sẽ xem xét và phản hồi sớm nhất có thể. ` +
+                `Khi có phản hồi, bạn sẽ thấy thông báo ở góc phải trên cùng trang.`,
+                'bot', null, true
+            );
+        } else {
+            appendMessage(
+                `Không thể tạo ticket: ${data.error || 'Lỗi hệ thống.'} Bạn vui lòng thử lại sau.`,
+                'bot', null, false
+            );
+        }
+    } catch (e) {
+        appendMessage('Lỗi kết nối, không gửi được ticket. Vui lòng thử lại.', 'bot', null, false);
+    }
 }
+
+/**
+ * Hiển confirm inline trong chatbot khi bot gợi ý tạo ticket (SV tự yêu cầu).
+ * @param {string} userQuestion - câu hỏi gốc của SV
+ */
+function showTicketConfirm(userQuestion) {
+    const body = document.getElementById('chatBody');
+
+    // Xóa confirm cũ nếu có
+    document.querySelectorAll('.ticket-confirm-block').forEach(el => el.remove());
+
+    const block = document.createElement('div');
+    block.className = 'chat-msg bot ticket-confirm-block';
+    block.style.cssText = 'border: 1.5px solid #007976; border-radius: 12px; padding: 14px 16px; background: #f0fdfc;';
+    block.innerHTML = `
+        <div style="margin-bottom:10px; color:#007976; font-weight:600; font-size:14px;">Gửi ticket hỗ trợ?</div>
+        <div style="font-size:13px; color:#444; margin-bottom:12px; line-height:1.5;">
+            Mình sẽ chuyển câu hỏi của bạn lên Ban quản trị UTH:<br>
+            <em style="color:#222;">“${escapeHTML(userQuestion)}”</em>
+        </div>
+        <div style="display:flex; gap:10px; flex-wrap:wrap;">
+            <button id="confirmTicketBtn" class="suggestion-chip" style="background:#007976; color:#fff; font-weight:600; border:none;" onclick="handleConfirmTicket()">Xác nhận gửi</button>
+            <button class="suggestion-chip" style="background:#eee; color:#555;" onclick="handleCancelTicket()">Hủy</button>
+        </div>
+    `;
+    body.appendChild(block);
+    body.scrollTop = body.scrollHeight;
+
+    // Lưu nội dung đang chờ xác nhận
+    window._pendingTicketQuestion = userQuestion;
+}
+
+/**
+ * Hiển nút mời tạo ticket sau khi bot trả lời không biết (insufficient_context).
+ * @param {string} userQuestion
+ */
+function showTicketOffer(userQuestion) {
+    const body = document.getElementById('chatBody');
+    document.querySelectorAll('.ticket-offer-block').forEach(el => el.remove());
+
+    const block = document.createElement('div');
+    block.className = 'ticket-offer-block';
+    block.style.cssText = 'display:flex; gap:8px; flex-wrap:wrap; margin-top:6px; padding: 0 4px;';
+    block.innerHTML = `
+        <button class="suggestion-chip ai-chip" style="border:1.5px solid #007976; color:#007976; background:#f0fdfc; font-weight:600;"
+            onclick="showTicketConfirmFromOffer()">Gửi ticket hỗ trợ</button>
+    `;
+    body.appendChild(block);
+    body.scrollTop = body.scrollHeight;
+    window._pendingTicketQuestion = userQuestion;
+}
+
+function showTicketConfirmFromOffer() {
+    document.querySelectorAll('.ticket-offer-block').forEach(el => el.remove());
+    showTicketConfirm(window._pendingTicketQuestion || lastUserMessage);
+}
+
+async function handleConfirmTicket() {
+    const question = window._pendingTicketQuestion || lastUserMessage;
+    document.querySelectorAll('.ticket-confirm-block').forEach(el => el.remove());
+    window._pendingTicketQuestion = null;
+
+    appendMessage('Bạn: “' + escapeHTML(question) + '” — Đang gửi ticket...', 'bot', null, false);
+    await createRealTicket(
+        mb_substr_compat(question, 0, 100) || 'Yêu cầu hỗ trợ',
+        question
+    );
+}
+
+function handleCancelTicket() {
+    document.querySelectorAll('.ticket-confirm-block').forEach(el => el.remove());
+    window._pendingTicketQuestion = null;
+    appendMessage('Ok, mình đã hủy. Bạn có thể hỏi lại bất kỳ lúc nào nhé!', 'bot', null, false);
+}
+
+/** Tiện ích cắt chuỗi */
+function mb_substr_compat(str, start, length) {
+    return Array.from(str).slice(start, start + length).join('');
+}
+
 
 function toggleChatWindow() {
     var w = document.getElementById("botWindow");
@@ -635,6 +772,175 @@ function sendQuickMessage(text) {
     var suggestions = document.getElementById("chatSuggestions");
     if(suggestions) suggestions.style.display = "none";
     sendMessage();
+}
+
+// ==========================================
+// TICKET FORM MODAL (mở từ dấu "...")
+// ==========================================
+
+/**
+ * Mở form modal điền tiêu đề + nội dung ticket chi tiết.
+ * @param {string} contextMessage - câu hỏi/ngữ cảnh từ cuộc trò chuyện
+ */
+function openTicketForm(contextMessage) {
+    // Xóa modal cũ nếu có
+    document.getElementById('chatbotTicketModal')?.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'chatbotTicketModal';
+    overlay.style.cssText = `
+        position:fixed; inset:0; z-index:99999;
+        background:rgba(0,0,0,0.5);
+        backdrop-filter:blur(4px);
+        display:flex; align-items:center; justify-content:center;
+        animation: ctmFadeIn .2s ease;
+    `;
+
+    overlay.innerHTML = `
+        <style>
+        @keyframes ctmFadeIn { from{opacity:0} to{opacity:1} }
+        @keyframes ctmSlide  { from{transform:translateY(20px) scale(.97);opacity:0} to{transform:none;opacity:1} }
+        #ctmBox {
+            background:#fff; border-radius:18px; width:96%; max-width:480px;
+            box-shadow:0 24px 64px rgba(0,0,0,.22);
+            animation:ctmSlide .25s cubic-bezier(.34,1.56,.64,1);
+            overflow:hidden; display:flex; flex-direction:column;
+        }
+        #ctmHeader {
+            background:linear-gradient(135deg,#007976,#00b5ad);
+            padding:18px 22px; display:flex; align-items:center; gap:12px;
+        }
+        #ctmHeaderText h4 {margin:0 0 2px;color:#fff;font-size:15px;font-weight:700;}
+        #ctmHeaderText p  {margin:0;color:rgba(255,255,255,.8);font-size:12px;}
+        #ctmCloseBtn {
+            margin-left:auto;height:32px;border-radius:8px;padding:0 10px;
+            background:rgba(255,255,255,.18);border:1.5px solid rgba(255,255,255,.3);
+            color:#fff;cursor:pointer;display:flex;align-items:center;justify-content:center;
+            transition:background .18s; flex-shrink:0;font-size:12px;font-weight:600;
+        }
+        #ctmCloseBtn:hover{background:rgba(255,255,255,.32);}
+        #ctmBody {padding:22px;}
+        .ctm-label {display:block;font-size:12px;font-weight:700;color:#555;margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px;}
+        .ctm-field {
+            width:100%;border:1.5px solid #dce0e8;border-radius:10px;
+            padding:11px 14px;font-size:14px;font-family:inherit;
+            background:#fafbfc;color:#1e2329;box-sizing:border-box;
+            transition:border-color .2s,box-shadow .2s;
+        }
+        .ctm-field:focus{outline:none;border-color:#007976;box-shadow:0 0 0 3px rgba(0,121,118,.12);background:#fff;}
+        .ctm-field-group{margin-bottom:16px;}
+        .ctm-hint {font-size:11.5px;color:#999;margin-top:5px;}
+        #ctmFooter {
+            display:flex;justify-content:flex-end;gap:10px;
+            padding:14px 22px;border-top:1px solid #edf0f4;background:#fafbfc;
+        }
+        #ctmCancelBtn {
+            padding:9px 18px;border-radius:9px;border:1.5px solid #dce0e8;
+            background:#fff;color:#555;font-size:14px;cursor:pointer;
+            transition:background .18s;
+        }
+        #ctmCancelBtn:hover{background:#f5f5f5;}
+        #ctmSubmitBtn {
+            padding:9px 22px;border-radius:9px;border:none;
+            background:linear-gradient(135deg,#007976,#009e96);color:#fff;
+            font-size:14px;font-weight:600;cursor:pointer;
+            display:flex;align-items:center;gap:7px;
+            box-shadow:0 2px 8px rgba(0,121,118,.3);
+            transition:transform .15s,box-shadow .15s;
+        }
+        #ctmSubmitBtn:hover{transform:translateY(-1px);box-shadow:0 4px 14px rgba(0,121,118,.4);}
+        #ctmSubmitBtn:disabled{background:#aaa;box-shadow:none;cursor:not-allowed;transform:none;}
+        </style>
+
+        <div id="ctmBox">
+            <div id="ctmHeader">
+                <div id="ctmHeaderText">
+                    <h4>Gửi yêu cầu hỗ trợ</h4>
+                    <p>Admin UTH sẽ phản hồi sớm nhất có thể</p>
+                </div>
+                <button id="ctmCloseBtn" onclick="document.getElementById('chatbotTicketModal').remove()">Đóng</button>
+            </div>
+
+            <div id="ctmBody">
+                <div class="ctm-field-group">
+                    <label class="ctm-label" for="ctmSubject">Tiêu đề yêu cầu</label>
+                    <input class="ctm-field" id="ctmSubject" type="text" maxlength="150"
+                        placeholder="VD: Thắc mắc về lịch thi học kỳ 1..."
+                        value="${escapeHTML(contextMessage || '').substring(0, 80)}">
+                    <p class="ctm-hint">Tóm tắt ngắn gọn vấn đề của bạn</p>
+                </div>
+                <div class="ctm-field-group">
+                    <label class="ctm-label" for="ctmDesc">Mô tả chi tiết</label>
+                    <textarea class="ctm-field" id="ctmDesc" rows="5"
+                        placeholder="Mô tả đầy đủ vấn đề: bạn cần hỗ trợ điều gì, đã thử cách nào, thông tin liên quan (học kỳ, môn học, mã SV…)"
+                    >${escapeHTML(contextMessage || '')}</textarea>
+                    <p class="ctm-hint">Cung cấp càng nhiều thông tin, admin càng dễ hỗ trợ</p>
+                </div>
+            </div>
+
+            <div id="ctmFooter">
+                <button id="ctmCancelBtn" onclick="document.getElementById('chatbotTicketModal').remove()">Hủy</button>
+                <button id="ctmSubmitBtn" onclick="submitTicketForm()">Gửi yêu cầu</button>
+            </div>
+        </div>
+    `;
+
+    // Đóng khi click ra ngoài
+    overlay.addEventListener('click', e => {
+        if (e.target === overlay) overlay.remove();
+    });
+
+    document.body.appendChild(overlay);
+    setTimeout(() => document.getElementById('ctmSubject')?.focus(), 200);
+}
+
+async function submitTicketForm() {
+    const subject = (document.getElementById('ctmSubject')?.value || '').trim();
+    const desc    = (document.getElementById('ctmDesc')?.value || '').trim();
+
+    if (!subject) {
+        document.getElementById('ctmSubject').focus();
+        document.getElementById('ctmSubject').style.borderColor = '#e53935';
+        return;
+    }
+    if (!desc) {
+        document.getElementById('ctmDesc').focus();
+        document.getElementById('ctmDesc').style.borderColor = '#e53935';
+        return;
+    }
+
+    const btn = document.getElementById('ctmSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Đang gửi...';
+
+    try {
+        const res = await fetch('../api/create_ticket.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ subject, description: desc })
+        });
+        const data = await res.json();
+
+        document.getElementById('chatbotTicketModal')?.remove();
+
+        if (data.success) {
+            appendMessage(
+                `<strong>Ticket ${data.ticket_number} đã được gửi!</strong><br>` +
+                `<em style="font-size:13px;color:#555;">Tiêu đề: ${escapeHTML(subject)}</em><br><br>` +
+                `Admin UTH sẽ xem xét và phản hồi sớm nhất có thể. ` +
+                `Bạn sẽ thấy thông báo ở phần <strong>Thông báo ticket</strong> trên trang Portal.`,
+                'bot', null, true
+            );
+        } else {
+            appendMessage(
+                `Không thể gửi ticket: ${data.error || 'Lỗi hệ thống.'} Vui lòng thử lại sau.`,
+                'bot', null, false
+            );
+        }
+    } catch (e) {
+        document.getElementById('chatbotTicketModal')?.remove();
+        appendMessage('Lỗi kết nối, không gửi được ticket. Vui lòng thử lại.', 'bot', null, false);
+    }
 }
 
 // Khởi tạo

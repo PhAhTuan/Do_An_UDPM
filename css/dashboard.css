@@ -490,7 +490,7 @@ body {
   width:52px;height:52px;border-radius:50%;
   background:#007976;border:none;cursor:pointer;
   display:flex;align-items:center;justify-content:center;
-  font-size:22px;color:#fff;
+  font-size:13px;font-weight:700;color:#fff;
   box-shadow:0 4px 20px rgba(0,121,118,.4);
   transition:transform .2s,box-shadow .2s;
 }
@@ -568,9 +568,6 @@ body {
   width:auto;min-width:58px;padding:0 8px;gap:5px;
   font-size:12px;font-weight:700;white-space:nowrap;
 }
-.bot-voice-toggle svg{
-  width:15px;height:15px;flex:0 0 auto;
-}
 .bot-voice-toggle.active{
   background:rgba(255,255,255,.22);color:#fff;
 }
@@ -611,27 +608,18 @@ body {
   gap: 8px;
   padding: 0 4px;
 }
-.bot-action-icon {
-  background: none; border: none; cursor: pointer;
-  width: 28px; height: 28px; border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  color: #888; transition: all 0.2s ease;
+.bot-action-btn {
+  background: none;border: 1px solid transparent;cursor: pointer;
+  min-height: 28px;border-radius: 6px;padding: 0 8px;
+  display: inline-flex;align-items: center;justify-content: center;
+  color: #777;transition: all 0.2s ease;font-size: 12px;
+  font-weight: 600;font-family: inherit;white-space: nowrap;
 }
-.bot-action-icon svg {
-  width: 16px; height: 16px;
+.bot-action-btn:hover {
+  background: #eaeaea;color: #333;
 }
-.bot-action-icon:hover {
-  background: #eaeaea; color: #333;
-}
-.bot-action-icon.is-reading {
+.bot-action-btn.is-reading {
   background:#e0f2f1;color:#007976;
-}
-.bot-speak-btn.is-reading svg {
-  animation: voicePulse 1s ease-in-out infinite;
-}
-@keyframes voicePulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.12); }
 }
 .bot-msg-menu-container {
   position: relative; z-index: 5;

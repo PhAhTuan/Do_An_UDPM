@@ -1,0 +1,1745 @@
+
+
+-- --- START OF FILE: database/do_an_udpm_database_complete.sql --- 
+
+-- ============================================================================
+-- UTH CHATBOT PORTAL - COMPLETE DATABASE SCHEMA
+-- Version: 2.0.0
+-- Target: MySQL 8.0+
+-- Generated: 2026-07-10
+--
+-- IMPORTANT:
+-- 1) Back up the current database before importing.
+-- 2) This script recreates database `do_an_udpm` from scratch.
+-- 3) Legacy FAQ data is imported as `pending` knowledge, NOT verified facts.
+-- 4) The chatbot should only answer authoritative UTH questions from records
+--    where verification_status = 'verified' and the record is currently valid.
+-- 5) Passwords must be stored with PHP password_hash(), never plaintext.
+-- ============================================================================
+
+SET NAMES utf8mb4;
+SET time_zone = '+07:00';
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP DATABASE IF EXISTS `do_an_udpm`;
+CREATE DATABASE `do_an_udpm`
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci;
+USE `do_an_udpm`;
+
+-- --------------------------------------------------------------------------
+-- 1. AUTHENTICATION, USERS, ORGANIZATION
+-- --------------------------------------------------------------------------
+CREATE TABLE roles (
+    id TINYINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(30) NOT NULL UNIQUE,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(255) NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE users (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(80) NOT NULL UNIQUE,
+    email VARCHAR(190) NULL UNIQUE,
+    password_hash VARCHAR(255) NOT NULL,
+    role_id TINYINT UNSIGNED NOT NULL,
+    full_name VARCHAR(150) NOT NULL,
+    phone VARCHAR(30) NULL,
+    avatar_url VARCHAR(500) NULL,
+    status ENUM('active','inactive','locked','pending') NOT NULL DEFAULT 'active',
+    email_verified_at DATETIME NULL,
+    last_login_at DATETIME NULL,
+    password_changed_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at DATETIME NULL,
+    CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles(id),
+    INDEX idx_users_status (status),
+    INDEX idx_users_name (full_name)
+) ENGINE=InnoDB;
+
+CREATE TABLE faculties (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(30) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    office_location VARCHAR(255) NULL,
+    email VARCHAR(190) NULL,
+    phone VARCHAR(30) NULL,
+    status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE programs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    faculty_id BIGINT UNSIGNED NULL,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    degree_level ENUM('college','bachelor','engineer','master','doctorate','other') NOT NULL DEFAULT 'bachelor',
+    education_type VARCHAR(100) NULL,
+    specialization VARCHAR(255) NULL,
+    total_credits SMALLINT UNSIGNED NULL,
+    standard_duration_semesters TINYINT UNSIGNED NULL,
+    status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_programs_faculty FOREIGN KEY (faculty_id) REFERENCES faculties(id) ON DELETE SET NULL,
+    INDEX idx_programs_faculty (faculty_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE student_profiles (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NOT NULL UNIQUE,
+    student_code VARCHAR(50) NOT NULL UNIQUE,
+    program_id BIGINT UNSIGNED NULL,
+    cohort_year SMALLINT UNSIGNED NULL,
+    class_code VARCHAR(50) NULL,
+    date_of_birth DATE NULL,
+    gender ENUM('male','female','other','undisclosed') NULL,
+    place_of_birth VARCHAR(255) NULL,
+    citizen_id VARCHAR(30) NULL UNIQUE,
+    permanent_address TEXT NULL,
+    current_address TEXT NULL,
+    enrollment_date DATE NULL,
+    expected_graduation_date DATE NULL,
+    academic_status ENUM('studying','reserved','graduated','suspended','withdrawn','dismissed') NOT NULL DEFAULT 'studying',
+    advisor_name VARCHAR(150) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_student_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    CONSTRAINT fk_student_program FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL,
+    INDEX idx_student_program (program_id),
+    INDEX idx_student_status (academic_status)
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 2. ACADEMIC STRUCTURE, TIMETABLE, EXAMS, GRADES
+-- --------------------------------------------------------------------------
+CREATE TABLE academic_years (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(20) NOT NULL UNIQUE,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    is_current BOOLEAN NOT NULL DEFAULT FALSE,
+    CHECK (end_date >= start_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE semesters (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    academic_year_id BIGINT UNSIGNED NOT NULL,
+    code VARCHAR(30) NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    semester_number TINYINT UNSIGNED NULL,
+    start_date DATE NOT NULL,
+    end_date DATE NOT NULL,
+    registration_start DATETIME NULL,
+    registration_end DATETIME NULL,
+    tuition_due_date DATETIME NULL,
+    is_current BOOLEAN NOT NULL DEFAULT FALSE,
+    CONSTRAINT fk_semester_year FOREIGN KEY (academic_year_id) REFERENCES academic_years(id),
+    UNIQUE KEY uk_semester_year_code (academic_year_id, code),
+    CHECK (end_date >= start_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE subjects (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    code VARCHAR(50) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    credits TINYINT UNSIGNED NOT NULL,
+    theory_periods SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    practice_periods SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    faculty_id BIGINT UNSIGNED NULL,
+    description TEXT NULL,
+    status ENUM('active','inactive') NOT NULL DEFAULT 'active',
+    CONSTRAINT fk_subject_faculty FOREIGN KEY (faculty_id) REFERENCES faculties(id) ON DELETE SET NULL,
+    FULLTEXT KEY ft_subject_search (code, name, description)
+) ENGINE=InnoDB;
+
+CREATE TABLE subject_prerequisites (
+    subject_id BIGINT UNSIGNED NOT NULL,
+    prerequisite_subject_id BIGINT UNSIGNED NOT NULL,
+    requirement_type ENUM('prerequisite','corequisite','previous') NOT NULL DEFAULT 'prerequisite',
+    minimum_letter_grade VARCHAR(5) NULL,
+    PRIMARY KEY (subject_id, prerequisite_subject_id, requirement_type),
+    CONSTRAINT fk_sp_subject FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    CONSTRAINT fk_sp_prerequisite FOREIGN KEY (prerequisite_subject_id) REFERENCES subjects(id) ON DELETE CASCADE,
+    CHECK (subject_id <> prerequisite_subject_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE course_sections (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    semester_id BIGINT UNSIGNED NOT NULL,
+    subject_id BIGINT UNSIGNED NOT NULL,
+    section_code VARCHAR(50) NOT NULL,
+    lecturer_name VARCHAR(150) NULL,
+    capacity SMALLINT UNSIGNED NULL,
+    registered_count SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    delivery_mode ENUM('offline','online','hybrid') NOT NULL DEFAULT 'offline',
+    status ENUM('planned','open','closed','cancelled','completed') NOT NULL DEFAULT 'open',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_section_semester FOREIGN KEY (semester_id) REFERENCES semesters(id),
+    CONSTRAINT fk_section_subject FOREIGN KEY (subject_id) REFERENCES subjects(id),
+    UNIQUE KEY uk_section_semester_code (semester_id, section_code),
+    INDEX idx_section_subject (subject_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE class_schedule_sessions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    course_section_id BIGINT UNSIGNED NOT NULL,
+    day_of_week TINYINT UNSIGNED NOT NULL COMMENT '1=Monday ... 7=Sunday',
+    start_time TIME NOT NULL,
+    end_time TIME NOT NULL,
+    room VARCHAR(100) NULL,
+    campus VARCHAR(255) NULL,
+    valid_from DATE NULL,
+    valid_until DATE NULL,
+    online_meeting_url VARCHAR(500) NULL,
+    CONSTRAINT fk_schedule_section FOREIGN KEY (course_section_id) REFERENCES course_sections(id) ON DELETE CASCADE,
+    CHECK (day_of_week BETWEEN 1 AND 7),
+    CHECK (end_time > start_time),
+    INDEX idx_schedule_day_time (day_of_week, start_time)
+) ENGINE=InnoDB;
+
+CREATE TABLE enrollments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    student_id BIGINT UNSIGNED NOT NULL,
+    course_section_id BIGINT UNSIGNED NOT NULL,
+    enrollment_status ENUM('registered','studying','withdrawn','completed','failed','cancelled') NOT NULL DEFAULT 'registered',
+    registered_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    withdrawn_at DATETIME NULL,
+    final_result VARCHAR(20) NULL,
+    CONSTRAINT fk_enrollment_student FOREIGN KEY (student_id) REFERENCES student_profiles(id) ON DELETE CASCADE,
+    CONSTRAINT fk_enrollment_section FOREIGN KEY (course_section_id) REFERENCES course_sections(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_student_section (student_id, course_section_id),
+    INDEX idx_enrollment_status (enrollment_status)
+) ENGINE=InnoDB;
+
+CREATE TABLE exam_schedules (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    course_section_id BIGINT UNSIGNED NOT NULL,
+    exam_type ENUM('midterm','final','retake','improvement','other') NOT NULL DEFAULT 'final',
+    exam_date DATE NOT NULL,
+    start_time TIME NOT NULL,
+    duration_minutes SMALLINT UNSIGNED NOT NULL,
+    room VARCHAR(100) NULL,
+    campus VARCHAR(255) NULL,
+    seat_number VARCHAR(30) NULL,
+    notes TEXT NULL,
+    published_at DATETIME NULL,
+    CONSTRAINT fk_exam_section FOREIGN KEY (course_section_id) REFERENCES course_sections(id) ON DELETE CASCADE,
+    INDEX idx_exam_date (exam_date, start_time)
+) ENGINE=InnoDB;
+
+CREATE TABLE grades (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    enrollment_id BIGINT UNSIGNED NOT NULL UNIQUE,
+    attendance_score DECIMAL(5,2) NULL,
+    process_score DECIMAL(5,2) NULL,
+    midterm_score DECIMAL(5,2) NULL,
+    final_exam_score DECIMAL(5,2) NULL,
+    final_score_10 DECIMAL(5,2) NULL,
+    grade_4 DECIMAL(4,2) NULL,
+    letter_grade VARCHAR(5) NULL,
+    result ENUM('pending','passed','failed','exempted') NOT NULL DEFAULT 'pending',
+    published_at DATETIME NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_grade_enrollment FOREIGN KEY (enrollment_id) REFERENCES enrollments(id) ON DELETE CASCADE,
+    CHECK (final_score_10 IS NULL OR (final_score_10 BETWEEN 0 AND 10)),
+    CHECK (grade_4 IS NULL OR (grade_4 BETWEEN 0 AND 4))
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 3. TUITION, INVOICES, PAYMENTS
+-- --------------------------------------------------------------------------
+CREATE TABLE tuition_invoices (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    student_id BIGINT UNSIGNED NOT NULL,
+    semester_id BIGINT UNSIGNED NOT NULL,
+    invoice_number VARCHAR(60) NOT NULL UNIQUE,
+    description VARCHAR(255) NULL,
+    subtotal DECIMAL(15,2) NOT NULL DEFAULT 0,
+    discount_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+    paid_amount DECIMAL(15,2) NOT NULL DEFAULT 0,
+    outstanding_amount DECIMAL(15,2) GENERATED ALWAYS AS (GREATEST(subtotal - discount_amount - paid_amount, 0)) STORED,
+    currency CHAR(3) NOT NULL DEFAULT 'VND',
+    due_date DATETIME NULL,
+    status ENUM('draft','unpaid','partially_paid','paid','overdue','cancelled','waived') NOT NULL DEFAULT 'unpaid',
+    issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_invoice_student FOREIGN KEY (student_id) REFERENCES student_profiles(id),
+    CONSTRAINT fk_invoice_semester FOREIGN KEY (semester_id) REFERENCES semesters(id),
+    INDEX idx_invoice_student_status (student_id, status),
+    INDEX idx_invoice_due (due_date)
+) ENGINE=InnoDB;
+
+CREATE TABLE tuition_invoice_items (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    invoice_id BIGINT UNSIGNED NOT NULL,
+    item_type ENUM('tuition_credit','insurance','service','penalty','other') NOT NULL,
+    reference_id BIGINT UNSIGNED NULL,
+    description VARCHAR(255) NOT NULL,
+    quantity DECIMAL(10,2) NOT NULL DEFAULT 1,
+    unit_price DECIMAL(15,2) NOT NULL DEFAULT 0,
+    amount DECIMAL(15,2) GENERATED ALWAYS AS (quantity * unit_price) STORED,
+    CONSTRAINT fk_invoice_item_invoice FOREIGN KEY (invoice_id) REFERENCES tuition_invoices(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE tuition_payments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    invoice_id BIGINT UNSIGNED NOT NULL,
+    transaction_code VARCHAR(100) NOT NULL UNIQUE,
+    amount DECIMAL(15,2) NOT NULL,
+    payment_method ENUM('bank_transfer','payment_gateway','cash','scholarship','waiver','other') NOT NULL,
+    payment_status ENUM('pending','success','failed','refunded') NOT NULL DEFAULT 'pending',
+    paid_at DATETIME NULL,
+    gateway_payload JSON NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_payment_invoice FOREIGN KEY (invoice_id) REFERENCES tuition_invoices(id) ON DELETE CASCADE,
+    INDEX idx_payment_status_date (payment_status, paid_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE tuition_extension_requests (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    student_id BIGINT UNSIGNED NOT NULL,
+    invoice_id BIGINT UNSIGNED NOT NULL,
+    reason TEXT NOT NULL,
+    requested_due_date DATE NULL,
+    status ENUM('pending','approved','rejected','cancelled') NOT NULL DEFAULT 'pending',
+    reviewer_id BIGINT UNSIGNED NULL,
+    reviewer_note TEXT NULL,
+    reviewed_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_extension_student FOREIGN KEY (student_id) REFERENCES student_profiles(id),
+    CONSTRAINT fk_extension_invoice FOREIGN KEY (invoice_id) REFERENCES tuition_invoices(id),
+    CONSTRAINT fk_extension_reviewer FOREIGN KEY (reviewer_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 4. ANNOUNCEMENTS, DEADLINES
+-- --------------------------------------------------------------------------
+CREATE TABLE announcements (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    title VARCHAR(255) NOT NULL,
+    slug VARCHAR(255) NULL UNIQUE,
+    summary TEXT NULL,
+    content LONGTEXT NOT NULL,
+    announcement_type ENUM('news','event','academic','tuition','exam','emergency','other') NOT NULL DEFAULT 'news',
+    source_url VARCHAR(1000) NULL,
+    published_by BIGINT UNSIGNED NULL,
+    published_at DATETIME NULL,
+    expires_at DATETIME NULL,
+    status ENUM('draft','published','archived') NOT NULL DEFAULT 'draft',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_announcement_publisher FOREIGN KEY (published_by) REFERENCES users(id) ON DELETE SET NULL,
+    FULLTEXT KEY ft_announcement_search (title, summary, content),
+    INDEX idx_announcement_live (status, published_at, expires_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE announcement_audiences (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    announcement_id BIGINT UNSIGNED NOT NULL,
+    audience_type ENUM('all','role','faculty','program','cohort','student') NOT NULL DEFAULT 'all',
+    audience_value VARCHAR(100) NULL,
+    CONSTRAINT fk_audience_announcement FOREIGN KEY (announcement_id) REFERENCES announcements(id) ON DELETE CASCADE,
+    INDEX idx_audience_lookup (audience_type, audience_value)
+) ENGINE=InnoDB;
+
+CREATE TABLE academic_deadlines (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    semester_id BIGINT UNSIGNED NULL,
+    title VARCHAR(255) NOT NULL,
+    deadline_type ENUM('course_registration','tuition','withdrawal','exam','appeal','certificate','graduation','other') NOT NULL,
+    description TEXT NULL,
+    starts_at DATETIME NULL,
+    due_at DATETIME NOT NULL,
+    audience_type ENUM('all','faculty','program','cohort','student') NOT NULL DEFAULT 'all',
+    audience_value VARCHAR(100) NULL,
+    source_url VARCHAR(1000) NULL,
+    status ENUM('draft','published','cancelled','completed') NOT NULL DEFAULT 'draft',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_deadline_semester FOREIGN KEY (semester_id) REFERENCES semesters(id) ON DELETE SET NULL,
+    INDEX idx_deadline_due (status, due_at),
+    FULLTEXT KEY ft_deadline_search (title, description)
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 5. RAG KNOWLEDGE BASE
+-- --------------------------------------------------------------------------
+CREATE TABLE knowledge_sources (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    source_type ENUM('official_web','regulation','announcement','faq','manual','uploaded_document','database','other') NOT NULL,
+    title VARCHAR(500) NOT NULL,
+    organization VARCHAR(255) NULL DEFAULT 'UTH',
+    document_number VARCHAR(100) NULL,
+    source_url VARCHAR(1000) NULL,
+    file_path VARCHAR(1000) NULL,
+    mime_type VARCHAR(150) NULL,
+    checksum_sha256 CHAR(64) NULL,
+    issued_date DATE NULL,
+    retrieved_at DATETIME NULL,
+    is_official BOOLEAN NOT NULL DEFAULT FALSE,
+    status ENUM('active','inactive','superseded','deleted') NOT NULL DEFAULT 'active',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_source_official (is_official, status),
+    INDEX idx_source_document (document_number)
+) ENGINE=InnoDB;
+
+CREATE TABLE knowledge_articles (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    source_id BIGINT UNSIGNED NULL,
+    title VARCHAR(500) NOT NULL,
+    category VARCHAR(120) NOT NULL,
+    subcategory VARCHAR(120) NULL,
+    intent_code VARCHAR(120) NULL,
+    keywords TEXT NULL,
+    answer_content LONGTEXT NOT NULL,
+    route_url VARCHAR(1000) NULL,
+    audience ENUM('all','prospective_student','student','lecturer','staff','parent') NOT NULL DEFAULT 'all',
+    faculty_id BIGINT UNSIGNED NULL,
+    program_id BIGINT UNSIGNED NULL,
+    cohort_from SMALLINT UNSIGNED NULL,
+    cohort_to SMALLINT UNSIGNED NULL,
+    semester_code VARCHAR(30) NULL,
+    academic_year_code VARCHAR(20) NULL,
+    valid_from DATETIME NULL,
+    valid_until DATETIME NULL,
+    verification_status ENUM('draft','pending','verified','rejected','expired') NOT NULL DEFAULT 'draft',
+    confidence_level ENUM('low','medium','high','authoritative') NOT NULL DEFAULT 'low',
+    priority TINYINT UNSIGNED NOT NULL DEFAULT 5,
+    version INT UNSIGNED NOT NULL DEFAULT 1,
+    language_code VARCHAR(10) NOT NULL DEFAULT 'vi',
+    created_by BIGINT UNSIGNED NULL,
+    reviewed_by BIGINT UNSIGNED NULL,
+    reviewed_at DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at DATETIME NULL,
+    CONSTRAINT fk_ka_source FOREIGN KEY (source_id) REFERENCES knowledge_sources(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ka_faculty FOREIGN KEY (faculty_id) REFERENCES faculties(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ka_program FOREIGN KEY (program_id) REFERENCES programs(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ka_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ka_reviewer FOREIGN KEY (reviewed_by) REFERENCES users(id) ON DELETE SET NULL,
+    FULLTEXT KEY ft_knowledge_search (title, keywords, answer_content),
+    INDEX idx_knowledge_filter (verification_status, category, valid_from, valid_until),
+    INDEX idx_knowledge_intent (intent_code),
+    INDEX idx_knowledge_priority (priority)
+) ENGINE=InnoDB;
+
+CREATE TABLE knowledge_question_examples (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    article_id BIGINT UNSIGNED NOT NULL,
+    example_question VARCHAR(1000) NOT NULL,
+    normalized_question VARCHAR(1000) NULL,
+    language_code VARCHAR(10) NOT NULL DEFAULT 'vi',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_kqe_article FOREIGN KEY (article_id) REFERENCES knowledge_articles(id) ON DELETE CASCADE,
+    FULLTEXT KEY ft_question_example (example_question, normalized_question)
+) ENGINE=InnoDB;
+
+CREATE TABLE knowledge_chunks (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    article_id BIGINT UNSIGNED NOT NULL,
+    chunk_index INT UNSIGNED NOT NULL,
+    heading VARCHAR(500) NULL,
+    chunk_text LONGTEXT NOT NULL,
+    token_count INT UNSIGNED NULL,
+    metadata JSON NULL,
+    embedding_model VARCHAR(120) NULL,
+    embedding_json JSON NULL COMMENT 'Portable fallback; use a vector DB for large-scale semantic retrieval',
+    content_hash CHAR(64) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_chunk_article FOREIGN KEY (article_id) REFERENCES knowledge_articles(id) ON DELETE CASCADE,
+    UNIQUE KEY uk_article_chunk (article_id, chunk_index),
+    FULLTEXT KEY ft_chunk_text (heading, chunk_text)
+) ENGINE=InnoDB;
+
+CREATE TABLE search_synonyms (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    canonical_term VARCHAR(255) NOT NULL,
+    synonym_term VARCHAR(255) NOT NULL,
+    category VARCHAR(120) NULL,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    UNIQUE KEY uk_synonym (canonical_term, synonym_term),
+    INDEX idx_synonym_term (synonym_term)
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 6. CHAT, RAG OBSERVABILITY, FEEDBACK
+-- --------------------------------------------------------------------------
+CREATE TABLE chat_sessions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    session_uuid CHAR(36) NOT NULL UNIQUE,
+    user_id BIGINT UNSIGNED NULL,
+    title VARCHAR(255) NULL,
+    channel ENUM('web','mobile','admin','api') NOT NULL DEFAULT 'web',
+    status ENUM('active','closed','archived') NOT NULL DEFAULT 'active',
+    language_code VARCHAR(10) NOT NULL DEFAULT 'vi',
+    context_summary TEXT NULL,
+    started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_activity_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    closed_at DATETIME NULL,
+    CONSTRAINT fk_chat_session_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_chat_user_activity (user_id, last_activity_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE chat_messages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    session_id BIGINT UNSIGNED NOT NULL,
+    parent_message_id BIGINT UNSIGNED NULL,
+    sender_type ENUM('user','assistant','system','tool') NOT NULL,
+    content LONGTEXT NOT NULL,
+    normalized_content LONGTEXT NULL,
+    detected_intent VARCHAR(120) NULL,
+    extracted_entities JSON NULL,
+    model_name VARCHAR(120) NULL,
+    prompt_tokens INT UNSIGNED NULL,
+    completion_tokens INT UNSIGNED NULL,
+    latency_ms INT UNSIGNED NULL,
+    confidence_score DECIMAL(8,6) NULL,
+    answer_status ENUM('ok','insufficient_context','clarification_needed','blocked','error') NOT NULL DEFAULT 'ok',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_message_session FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+    CONSTRAINT fk_message_parent FOREIGN KEY (parent_message_id) REFERENCES chat_messages(id) ON DELETE SET NULL,
+    INDEX idx_message_session_time (session_id, created_at),
+    FULLTEXT KEY ft_chat_content (content, normalized_content)
+) ENGINE=InnoDB;
+
+CREATE TABLE rag_retrieval_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_message_id BIGINT UNSIGNED NOT NULL,
+    article_id BIGINT UNSIGNED NULL,
+    chunk_id BIGINT UNSIGNED NULL,
+    rank_position SMALLINT UNSIGNED NULL,
+    keyword_score DECIMAL(10,6) NULL,
+    semantic_score DECIMAL(10,6) NULL,
+    metadata_score DECIMAL(10,6) NULL,
+    freshness_score DECIMAL(10,6) NULL,
+    final_score DECIMAL(10,6) NULL,
+    selected_for_context BOOLEAN NOT NULL DEFAULT FALSE,
+    rejection_reason VARCHAR(255) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_retrieval_message FOREIGN KEY (user_message_id) REFERENCES chat_messages(id) ON DELETE CASCADE,
+    CONSTRAINT fk_retrieval_article FOREIGN KEY (article_id) REFERENCES knowledge_articles(id) ON DELETE SET NULL,
+    CONSTRAINT fk_retrieval_chunk FOREIGN KEY (chunk_id) REFERENCES knowledge_chunks(id) ON DELETE SET NULL,
+    INDEX idx_retrieval_message_rank (user_message_id, rank_position),
+    INDEX idx_retrieval_selected (selected_for_context, final_score)
+) ENGINE=InnoDB;
+
+CREATE TABLE chat_feedback (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    message_id BIGINT UNSIGNED NOT NULL,
+    user_id BIGINT UNSIGNED NULL,
+    rating ENUM('up','down') NOT NULL,
+    reason_code ENUM('incorrect','outdated','irrelevant','unclear','unsafe','helpful','other') NULL,
+    comment TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_feedback_message FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE,
+    CONSTRAINT fk_feedback_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE KEY uk_feedback_user_message (message_id, user_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE unanswered_questions (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_message_id BIGINT UNSIGNED NULL,
+    normalized_question TEXT NOT NULL,
+    detected_intent VARCHAR(120) NULL,
+    occurrence_count INT UNSIGNED NOT NULL DEFAULT 1,
+    status ENUM('new','reviewing','resolved','ignored') NOT NULL DEFAULT 'new',
+    resolved_article_id BIGINT UNSIGNED NULL,
+    first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_unanswered_message FOREIGN KEY (user_message_id) REFERENCES chat_messages(id) ON DELETE SET NULL,
+    CONSTRAINT fk_unanswered_article FOREIGN KEY (resolved_article_id) REFERENCES knowledge_articles(id) ON DELETE SET NULL,
+    FULLTEXT KEY ft_unanswered_question (normalized_question),
+    INDEX idx_unanswered_status_count (status, occurrence_count)
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 7. SUPPORT TICKETS
+-- --------------------------------------------------------------------------
+CREATE TABLE tickets (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_number VARCHAR(30) NOT NULL UNIQUE,
+    student_id BIGINT UNSIGNED NULL,
+    requester_name VARCHAR(150) NOT NULL,
+    requester_student_code VARCHAR(50) NULL,
+    category VARCHAR(120) NULL,
+    subject VARCHAR(255) NOT NULL,
+    description LONGTEXT NOT NULL,
+    priority ENUM('low','normal','high','urgent') NOT NULL DEFAULT 'normal',
+    status ENUM('open','in_progress','waiting_student','resolved','closed','cancelled') NOT NULL DEFAULT 'open',
+    assigned_to BIGINT UNSIGNED NULL,
+    source_chat_session_id BIGINT UNSIGNED NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    resolved_at DATETIME NULL,
+    closed_at DATETIME NULL,
+    CONSTRAINT fk_ticket_student FOREIGN KEY (student_id) REFERENCES student_profiles(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ticket_assignee FOREIGN KEY (assigned_to) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_ticket_chat FOREIGN KEY (source_chat_session_id) REFERENCES chat_sessions(id) ON DELETE SET NULL,
+    INDEX idx_ticket_status_priority (status, priority),
+    INDEX idx_ticket_student (student_id)
+) ENGINE=InnoDB;
+
+CREATE TABLE ticket_messages (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_id BIGINT UNSIGNED NOT NULL,
+    sender_user_id BIGINT UNSIGNED NULL,
+    sender_role ENUM('student','admin','system') NOT NULL,
+    message LONGTEXT NOT NULL,
+    is_internal_note BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_ticket_message_ticket FOREIGN KEY (ticket_id) REFERENCES tickets(id) ON DELETE CASCADE,
+    CONSTRAINT fk_ticket_message_sender FOREIGN KEY (sender_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_ticket_message_time (ticket_id, created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE ticket_attachments (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    ticket_message_id BIGINT UNSIGNED NOT NULL,
+    original_name VARCHAR(255) NOT NULL,
+    stored_path VARCHAR(1000) NOT NULL,
+    mime_type VARCHAR(150) NULL,
+    size_bytes BIGINT UNSIGNED NULL,
+    checksum_sha256 CHAR(64) NULL,
+    uploaded_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_ticket_attachment_message FOREIGN KEY (ticket_message_id) REFERENCES ticket_messages(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 8. SYSTEM CONFIGURATION, AUDIT, FILE INGESTION
+-- --------------------------------------------------------------------------
+CREATE TABLE system_settings (
+    setting_key VARCHAR(120) PRIMARY KEY,
+    setting_value JSON NOT NULL,
+    description VARCHAR(500) NULL,
+    is_public BOOLEAN NOT NULL DEFAULT FALSE,
+    updated_by BIGINT UNSIGNED NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_setting_user FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+CREATE TABLE uploaded_documents (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    uploaded_by BIGINT UNSIGNED NULL,
+    original_name VARCHAR(255) NOT NULL,
+    stored_path VARCHAR(1000) NOT NULL,
+    mime_type VARCHAR(150) NULL,
+    size_bytes BIGINT UNSIGNED NULL,
+    checksum_sha256 CHAR(64) NULL,
+    processing_status ENUM('uploaded','extracting','chunking','ready','failed') NOT NULL DEFAULT 'uploaded',
+    extracted_text LONGTEXT NULL,
+    error_message TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    processed_at DATETIME NULL,
+    CONSTRAINT fk_document_uploader FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE KEY uk_document_checksum (checksum_sha256)
+) ENGINE=InnoDB;
+
+CREATE TABLE audit_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    action VARCHAR(120) NOT NULL,
+    entity_type VARCHAR(120) NULL,
+    entity_id VARCHAR(120) NULL,
+    old_values JSON NULL,
+    new_values JSON NULL,
+    ip_address VARCHAR(45) NULL,
+    user_agent VARCHAR(1000) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_audit_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_audit_entity (entity_type, entity_id),
+    INDEX idx_audit_user_time (user_id, created_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE api_usage_logs (
+    id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    user_id BIGINT UNSIGNED NULL,
+    provider VARCHAR(80) NOT NULL,
+    model_name VARCHAR(120) NULL,
+    endpoint VARCHAR(255) NULL,
+    request_id VARCHAR(255) NULL,
+    input_tokens INT UNSIGNED NULL,
+    output_tokens INT UNSIGNED NULL,
+    estimated_cost DECIMAL(14,8) NULL,
+    status_code SMALLINT UNSIGNED NULL,
+    latency_ms INT UNSIGNED NULL,
+    error_message TEXT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_api_usage_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_api_usage_provider_time (provider, created_at)
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------------------------
+-- 9. LEGACY FAQ COMPATIBILITY + RAW IMPORT
+-- --------------------------------------------------------------------------
+CREATE TABLE faq (
+    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+    topic_group VARCHAR(255) NULL,
+    tu_khoa TEXT NOT NULL,
+    noi_dung LONGTEXT NOT NULL,
+    link_dieu_huong VARCHAR(1000) NULL,
+    verification_status ENUM('draft','pending','verified','rejected','expired') NOT NULL DEFAULT 'pending',
+    source_url VARCHAR(1000) NULL,
+    valid_from DATETIME NULL,
+    valid_until DATETIME NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_faq_topic (topic_group),
+    INDEX idx_faq_verified (verification_status, valid_from, valid_until),
+    FULLTEXT KEY ft_faq_search (tu_khoa, noi_dung)
+) ENGINE=InnoDB;
+
+INSERT INTO faq (id, topic_group, tu_khoa, noi_dung, link_dieu_huong) VALUES
+(1, 'Thông tin chung', 'Địa chỉ trường ở đâu? UTH có mấy cơ sở? Trường nằm ở chỗ nào?', 'Trường Đại học Giao thông Vận tải TP.HCM (UTH) có cơ sở chính tại Số 2, Đường Võ Oanh, Phường 25, Quận Bình Thạnh, TP.HCM. Ngoài ra, trường còn có các cơ sở đào tạo khác tại Quận 12 (TP.HCM), TP. Thủ Đức và TP. Vũng Tàu. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về bãi giữ xe của trường, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(2, 'Chương trình Đào tạo', 'Trường có những ngành gì? Ngành CNTT học hệ nào? Đào tạo chất lượng cao là sao?', 'UTH là trường công lập đào tạo đa ngành hàng đầu về Giao thông vận tải, Logistics, Công nghệ thông tin, Khoa học dữ liệu, Điện tử viễn thông, Kinh tế vận tải và Kỹ thuật công trình. Hệ đào tạo gồm 2 loại hình: Hệ Đại trà và Hệ Chất lượng cao. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời gian nhận bằng tốt nghiệp và về xin hoãn đi thực tập tốt nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(3, 'Cách Tính Điểm', 'Cách tính điểm môn học thế nào? Điểm F là gì? Quy chế thang điểm chữ?', 'UTH áp dụng đào tạo theo hệ thống tín chỉ. Điểm tổng kết môn gồm: Điểm quá trình và Điểm thi kết thúc học phần. Điểm tính theo thang điểm 10 rồi quy đổi sang thang điểm chữ (A, B, C, D, F) tương ứng với thang điểm 4. Điểm F là rớt môn và bắt buộc phải đóng tiền đăng ký học lại. Ngoài ra, nếu bạn còn thắc mắc về xét giảm điểm rèn luyện hoặc về phúc khảo điểm thi, mình có thể hỗ trợ giải đáp thêm nhé.', '/ket-qua-hoc-tap'),
+(4, 'Học Cải Thiện', 'Điểm thấp có được học lại không? Làm sao để nâng điểm tích lũy?', 'Sinh viên đạt điểm trung bình môn ở mức D, D+, C, C+ muốn nâng cao điểm trung bình tích lũy (GPA) được phép đăng ký học cải thiện vào các học kỳ tiếp theo. Khi học cải thiện, điểm của lần học sau sẽ thay thế hoàn toàn cho điểm của lần học trước. Bên cạnh đó, nếu bạn cũng quan tâm về xét giảm điểm rèn luyện, hay về quy trình chấm điểm rèn luyện, cứ hỏi mình thêm nha.', '/ket-qua-hoc-tap'),
+(5, 'Cảnh Báo Học Vụ', 'Điều kiện xét nâng lớp? Khi nào bị cảnh báo học vụ? Bị buộc thôi học khi nào?', 'Sinh viên sẽ bị cảnh báo học vụ nếu điểm trung bình tích lũy học kỳ đạt dưới 0.8 (đối với học kỳ đầu tiên) hoặc dưới 1.0 (đối với các học kỳ tiếp theo), hoặc số tín chỉ bị nợ vượt quá quy định. Bị cảnh báo học vụ 2 lần liên tiếp sẽ thuộc diện xem xét buộc thôi học. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về xét giảm điểm rèn luyện và về điểm rèn luyện f — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(6, 'Đăng Ký Môn Học', 'Khi nào đăng ký học phần? Một kỳ được đăng ký tối đa bao nhiêu tín chỉ? Hủy môn học ở đâu?', 'Sinh viên thực hiện đăng ký học phần (DKMH) trực tuyến tại trang Portal UTH theo khung thời gian thông báo của Phòng Đào tạo. Sinh viên hệ đại trà được đăng ký tối đa 24 tín chỉ và tối thiểu 14 tín chỉ trong một học kỳ chính. Ngoài ra, nếu bạn còn thắc mắc về quy định số lần cảnh báo học vụ hoặc về cách tính điểm, mình có thể hỗ trợ giải đáp thêm nhé.', '/dang-ky-hoc-phan'),
+(7, 'Môn Điều Kiện', 'Môn tiên quyết là gì? Môn học trước là gì? Khác nhau thế nào?', 'Môn tiên quyết là môn sinh viên bắt buộc phải học và thi đạt (điểm chữ từ D trở lên) mới được đăng ký môn tiếp theo. Môn học trước là môn sinh viên chỉ cần hoàn thành khóa học (kể cả thi rớt điểm F) là đã đủ điều kiện đăng ký môn sau. Bên cạnh đó, nếu bạn cũng quan tâm về quy trình chấm điểm rèn luyện, hay về bảo lưu kết quả, cứ hỏi mình thêm nha.', '/dang-ky-mon-hoc-dieu-kien'),
+(8, 'Quy Chế Thi Cử', 'Xem lịch thi ở đâu? Vào phòng thi cần mang gì? Hoãn thi làm sao?', 'Lịch thi học kỳ được công bố trên Portal trước kỳ thi 2 tuần. Khi vào phòng thi, sinh viên bắt buộc phải xuất trình Thẻ sinh viên chính thức hoặc giấy tờ tùy thân có ảnh (CCCD). Sinh viên vắng thi không có lý do chính đáng sẽ nhận điểm 0. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về bảo lưu kết quả và về rút học phần, hủy môn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/lich-hoc-trong-tuan'),
+(9, 'Học Phí Trường', 'Học phí một tín chỉ bao nhiêu tiền? Đóng tiền học ở đâu?', 'Học phí UTH được tính theo số tín chỉ đăng ký mỗi học kỳ, phân theo 3 loại chương trình: Chương trình chuẩn (đại trà), Chương trình tiên tiến (trước đây gọi là Chất lượng cao) và Chương trình học hoàn toàn bằng tiếng Anh. Mức thu áp dụng cho tân sinh viên khóa tuyển sinh năm 2026: Chương trình chuẩn 515.000đ/tín chỉ; Chương trình tiên tiến 1.120.000đ/tín chỉ; Chương trình hoàn toàn bằng tiếng Anh 1.500.000đ/tín chỉ. Sinh viên các khóa nhập học từ năm 2025 trở về trước áp dụng mức học phí đã công bố riêng cho khóa đó (thường thấp hơn khóa mới, ví dụ khóa 2025: chương trình chuẩn 400.000đ/tín chỉ, tiên tiến 980.000đ/tín chỉ). Trường cam kết không tăng học phí trong 3 năm đầu tính từ năm nhập học của mỗi khóa. Sinh viên nộp học phí trực tuyến qua Cổng thanh toán của trường (payment.ut.edu.vn) và nên tra cứu mức thu chính xác áp dụng cho khóa của mình trên Portal cá nhân. Ngoài ra, nếu bạn còn thắc mắc về học phí chương trình tiên tiến hoặc về chính sách hỗ trợ bảo hiểm tai nạn, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(10, 'Gia Hạn Học Phí', 'Không có tiền đóng học phí làm sao? Xin nợ học phí ở đâu?', 'Sinh viên có hoàn cảnh khó khăn không thể hoàn thành học phí đúng hạn phải làm Đơn xin gia hạn học phí trực tuyến gửi Phòng Công tác sinh viên trước thời hạn quy định để không bị khóa tài khoản đăng ký môn học và bị cấm thi. Bên cạnh đó, nếu bạn cũng quan tâm về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên, hay về bảo hiểm y tế, cứ hỏi mình thêm nha.', '/tra-cuu-cong-no'),
+(11, 'Hoạt Động Đoàn Hội', 'Lịch hiến máu tình nguyện? Tham gia hoạt động được cộng bao nhiêu điểm rèn luyện?', 'Ngày hội hiến máu tình nguyện trường UTH được tổ chức định kỳ hàng năm tại Sảnh lớn khu giảng đường A. Sinh viên tham gia hiến máu nhân đạo sẽ được cấp giấy chứng nhận, hỗ trợ chi phí và được cộng 5 điểm rèn luyện (ĐRL) vào mục hoạt động cộng đồng. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về ngày hội sáng tạo và về học bổng doanh nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(12, 'Các Câu Lạc Bộ', 'Trường có CLB guitar không? Đội tình nguyện hoạt động thế nào?', 'UTH hiện có hơn 20 Câu lạc bộ (CLB) sinh viên đang hoạt động thuộc các khối: Học thuật (CLB Tin học, CLB Logistics), Nghệ thuật (CLB Guitar, CLB Bước Nhảy), Thể thao (CLB Bóng đá, Bóng chuyền) và Tình nguyện (Đội Công tác xã hội, CLB Tiếp sức đến trường). Ngoài ra, nếu bạn còn thắc mắc về hoạt động đoàn hội hoặc về đăng ký tham gia hiến máu đợt hè, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(13, 'Học Bổng Khuyến Khích', 'Điều kiện nhận học bổng trường? Điểm rèn luyện bao nhiêu thì được học bổng?', 'Học bổng khuyến khích học tập UTH được xét sau mỗi học kỳ dựa trên 2 tiêu chí song song: Điểm trung bình học tập đạt loại Khá trở lên (từ 2.5/4.0) và Điểm rèn luyện đạt loại Tốt trở lên (từ 80 điểm/100), đồng thời không bị kỷ luật và không nợ môn. Bên cạnh đó, nếu bạn cũng quan tâm về chiến sĩ tình nguyện, hay về giải chạy sinh viên, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(14, 'Chuẩn Đầu Ra Ngoại Ngữ', 'Chuẩn tiếng Anh xét tốt nghiệp? Nộp bằng TOEIC ở đâu? Điều kiện miễn học Anh văn?', 'Sinh viên đại học chính quy UTH phải đạt chuẩn đầu ra tiếng Anh theo quy định (thường là TOEIC 450 trở lên hoặc B1 VSTEP tùy theo ngành học). Chứng chỉ phải còn giá trị hiệu lực và nộp về Trung tâm Ngoại ngữ trường để làm thủ tục hậu kiểm xét tốt nghiệp. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chuẩn tin học quốc tế nâng cao và về đăng ký thi lại chuẩn đầu ra — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(15, 'Chuẩn Tin Học', 'Chuẩn tin học đầu ra là gì? Chứng chỉ MOS hay IC3?', 'Sinh viên UTH bắt buộc phải hoàn thành chuẩn đầu ra Tin học bằng việc đạt chứng chỉ Tin học đại chúng đại học hoặc các chứng chỉ quốc tế được công nhận tương đương như MOS (đạt 3 kỹ năng Word, Excel, Powerpoint) hoặc IC3. Ngoài ra, nếu bạn còn thắc mắc về cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH hoặc về chuẩn tin học quốc tế nâng cao, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(16, 'Điều Kiện Tốt Nghiệp', 'Làm sao để được ra trường? Điều kiện xét tốt nghiệp UTH? Nợ môn có được xét tốt nghiệp?', 'Điều kiện xét công nhận tốt nghiệp UTH: Tích lũy đủ số tín chỉ của chương trình khung; Điểm trung bình tích lũy (GPA) toàn khóa đạt từ 2.0/4.0 trở lên; Đạt chuẩn đầu ra Ngoại ngữ và Tin học; Đạt chứng chỉ Giáo dục quốc phòng và Giáo dục thể chất; Không trong thời gian bị kỷ luật. Bên cạnh đó, nếu bạn cũng quan tâm về chuyển cơ sở học tập, hay về thủ tục chuyển ngành, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(17, 'Mất Thẻ Sinh Viên', 'Làm lại thẻ sinh viên ở đâu? Mất thẻ sinh viên đóng phạt bao nhiêu?', 'Khi bị mất thẻ, sinh viên đến Phòng Công tác sinh viên (Cơ sở chính, khu nhà A) để làm thủ tục xin cấp lại thẻ sinh viên mới. Lệ phí cấp lại thẻ theo quy định là 50.000đ. Trong thời gian chờ cấp thẻ mới, sinh viên được cấp giấy xác nhận tạm thời để ra vào trường. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về khóa tài khoản Portal và về quy định mượn học cụ, thiết bị tại phòng thí nghiệm — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(18, 'Ký Túc Xá Trường', 'Đăng ký ở KTX ở đâu? Chi phí Ký túc xá UTH? Đối tượng ưu tiên ở KTX?', 'UTH hỗ trợ chỗ ở tại Ký túc xá trường cho sinh viên (ưu tiên sinh viên diện chính sách, vùng sâu vùng xa, hoàn cảnh khó khăn). Sinh viên làm Đơn đăng ký nội trú trực tuyến trên Portal hoặc nộp hồ sơ trực tiếp tại Ban quản lý Ký túc xá trong thời gian quy định đầu năm học. Ngoài ra, nếu bạn còn thắc mắc về liên hệ ban quản lý ký túc xá hoặc về ký túc xá quận 12, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(19, 'Mượn Sách Thư Viện', 'Thư viện trường ở đâu? Cách mượn sách về nhà? Trả sách trễ hạn bị phạt thế nào?', 'Thư viện UTH đặt tại khu vực cơ sở chính. Sinh viên sử dụng Thẻ sinh viên để vào thư viện đọc sách hoặc làm thủ tục mượn tài liệu về nhà. Thời gian mượn tối đa là 2 tuần/cuốn. Nếu trả sách trễ hạn, sinh viên sẽ bị phạt tiền theo quy định của thư viện. Bên cạnh đó, nếu bạn cũng quan tâm về quy định mượn học cụ, thiết bị tại phòng thí nghiệm, hay về bảng điểm tiếng anh, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(20, 'Bảo Hiểm Y Tế', 'Đóng tiền bảo hiểm y tế ở đâu? Hạn chót nộp BHYT? Gia hạn bảo hiểm sinh viên?', 'Bảo hiểm y tế (BHYT) là hình thức bắt buộc đối với tất cả sinh viên. Nhà trường tổ chức thu tiền và gia hạn BHYT định kỳ vào đầu năm học thông qua Cổng thanh toán trực tuyến. Sinh viên có thẻ BHYT diện hộ nghèo, thân nhân quân nhân phải nộp bản photo minh chứng để được miễn giảm. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đóng lệ phí thi lại và về phí phạt nợ học phí quá hạn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/cong-thanh-toan'),
+(21, 'Sinh Viên 5 Tốt', 'Tiêu chí đạt Sinh viên 5 Tốt? Quyền lợi khi đạt Sinh viên 5 Tốt UTH?', 'Danh hiệu Sinh viên 5 Tốt được xét duyệt hàng năm dựa trên 5 tiêu chí: Học tập tốt (GPA >= 3.2 hoặc 2.8 tùy hệ), Đạo đức tốt (ĐRL >= 80), Thể lực tốt (đạt danh hiệu khỏe), Tình nguyện tốt (tham gia chiến dịch lớn), và Hội nhập tốt (đạt giải thưởng khoa học hoặc kỹ năng ngoại ngữ tốt). Ngoài ra, nếu bạn còn thắc mắc về ngày hội việc làm hoặc về khen thưởng sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(22, 'Nghiên Cứu Khoa Học', 'Đăng ký nghiên cứu khoa học ở đâu? Quyền lợi khi làm NCKH sinh viên?', 'Phong trào Nghiên cứu khoa học (NCKH) sinh viên UTH được phát động vào đầu học kỳ 1. Sinh viên đăng ký đề tài theo nhóm (dưới sự hướng dẫn của giảng viên) thông qua Phòng Quản lý khoa học. Đề tài nghiệm thu đạt loại Khá trở lên sẽ được cộng điểm rèn luyện và thưởng tiền mặt. Bên cạnh đó, nếu bạn cũng quan tâm về đại hội đoàn, hay về giải bóng đá UTH, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(23, 'Rút Học Phần, Hủy Môn', 'Cách rút môn học? Hạn chót hủy học phần đã đăng ký? Rút môn có được hoàn tiền không?', 'Trong 2 tuần đầu của học kỳ chính (hoặc 1 tuần đối với học kỳ hè), sinh viên được phép nộp đơn online để xin rút bớt học phần đã đăng ký. Học phần xin rút thành công sẽ ghi nhận điểm chữ W trên bảng điểm, không tính vào điểm trung bình tích lũy nhưng sinh viên không được hoàn lại học phí. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về quy chế thi cử và về quy trình chấm điểm rèn luyện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dang-ky-hoc-phan'),
+(24, 'Phòng Công Tác Sinh Viên', 'Liên hệ phòng CTSV ở đâu? Xin giấy xác nhận sinh viên vay vốn ở đâu?', 'Phòng Công tác sinh viên (CTSV) chịu trách nhiệm giải quyết các thủ tục: Cấp giấy xác nhận sinh viên để vay vốn ngân hàng, tạm hoãn nghĩa vụ quân sự, đánh giá điểm rèn luyện, giải quyết chế độ chính sách, miễn giảm học phí. Văn phòng đặt tại tầng trệt nhà A cơ sở chính. Ngoài ra, nếu bạn còn thắc mắc về minh chứng ĐRL hoặc về tư vấn tâm lý và hỗ trợ sinh viên gặp áp lực học đường, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(25, 'Phòng Đào Tạo', 'Số điện thoại Phòng Đào tạo? Hỏi về lịch học, lịch thi, xét tốt nghiệp ở đâu?', 'Phòng Đào tạo UTH là nơi giải quyết các vấn đề chuyên môn về: Khung lịch học, lịch thi, giải quyết đơn phúc khảo điểm thi, cấp bảng điểm chính thức, xử lý hồ sơ chuyển ngành, ngừng học tạm thời, bảo lưu kết quả, và xét công nhận tốt nghiệp. Bên cạnh đó, nếu bạn cũng quan tâm về các tuyến xe buýt, hay về đại hội đoàn, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(26, 'Ký Túc Xá Quận 12', 'KTX Quận 12 ở đâu? Đăng ký ký túc xá cơ sở 2? Chi phí phòng KTX Quận 12?', 'Cơ sở 2 của UTH tại Quận 12 có khu Ký túc xá khang trang dành riêng cho sinh viên học tập tại đây. Chi phí nội trú dao động từ 150.000đ - 250.000đ/tháng/sinh viên tùy loại phòng. Sinh viên nộp đơn đăng ký trực tiếp tại Ban quản lý KTX Cơ sở 2. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về liên hệ ban quản lý ký túc xá và về ký túc xá trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(27, 'Học Bổng Doanh Nghiệp', 'Học bổng tài trợ? Điều kiện nhận học bổng ngoài ngân sách? Học bổng vượt khó?', 'Ngoài học bổng khuyến khích của trường, sinh viên UTH còn có cơ hội nhận Học bổng tài trợ từ các tập đoàn, doanh nghiệp lớn đối tác (như các tổng công ty xây dựng, cảng biển, công ty công nghệ). Tiêu chí xét tuyển thường ưu tiên sinh viên nghèo vượt khó học giỏi hoặc có thành tích xuất sắc. Ngoài ra, nếu bạn còn thắc mắc về giải chạy sinh viên hoặc về học bổng liên kết, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(28, 'Các Tuyến Xe Buýt', 'Xe buýt nào đi qua trường UTH? Đi xe bus đến Võ Oanh? Xe bus qua cơ sở Bình Thạnh?', 'Cơ sở chính Võ Oanh (Bình Thạnh) có rất nhiều tuyến xe buýt đi qua như tuyến số 08, 14, 19, 43, 44, 93 (dừng tại trạm Điện Biên Phủ hoặc Nguyễn Văn Thương rồi đi bộ vào). Sinh viên được hưởng giá vé ưu đãi khi xuất trình Thẻ sinh viên UTH. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về thời gian giữ xe tối đa tại trường, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(29, 'Thủ Tục Chuyển Ngành', 'Làm sao để đổi ngành học? Điều kiện chuyển ngành UTH? Đang học có được đổi ngành khác?', 'Sinh viên được xem xét chuyển ngành nếu: Không thuộc diện bị buộc thôi học; Điểm xét tuyển đầu vào không thấp hơn điểm trúng tuyển của ngành muốn chuyển sang; Có đơn xin chuyển ngành và được sự đồng ý của cả hai Khoa chủ quản. Thủ tục làm tại Phòng Đào tạo vào cuối năm học thứ nhất. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đăng ký môn học và về cảnh báo học vụ — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(30, 'Bảo Lưu Kết Quả', 'Xin tạm dừng học? Cách làm đơn bảo lưu học tập? Nghỉ học tạm thời được bao lâu?', 'Sinh viên được xin nghỉ học tạm thời và bảo lưu kết quả học tập vì lý do cá nhân (như sức khỏe, hoàn cảnh gia đình hoặc thực hiện nghĩa vụ quân sự). Thời gian tạm dừng học không quá 2 học kỳ chính và phải làm đơn nộp về Phòng Đào tạo trước khi học kỳ mới bắt đầu. Ngoài ra, nếu bạn còn thắc mắc về đăng ký môn học hoặc về quy định số lần cảnh báo học vụ, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(31, 'Phúc Khảo Điểm Thi', 'Chấm phúc khảo ở đâu? Lệ phí phúc khảo bài thi? Thời hạn nộp đơn chấm phúc khảo?', 'Nếu thấy điểm thi kết thúc học phần không chính xác, sinh viên có quyền làm Đơn xin phúc khảo bài thi nộp về Phòng Đào tạo hoặc văn phòng Khoa trong vòng 5 ngày làm việc kể từ ngày công bố điểm. Lệ phí phúc khảo theo quy định hiện hành của trường. Bên cạnh đó, nếu bạn cũng quan tâm về quy định số lần cảnh báo học vụ, hay về thủ tục chuyển ngành, cứ hỏi mình thêm nha.', '/ket-qua-hoc-tap'),
+(32, 'Đồng Phục & Trang Phục', 'Quy định đồng phục UTH? Mặc áo gì đi học? Có bắt buộc mặc áo trường không?', 'Sinh viên khi đến trường UTH phải ăn mặc lịch sự, gọn gàng, không mặc quần đùi, áo ba lỗ, dép lê vào lớp. Nhà trường khuyến khích sinh viên mặc Áo thun đồng phục UTH hoặc áo sơ mi trắng vào các ngày lễ, các buổi sinh hoạt chung và các ngày cố định theo quy định của Khoa. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đăng ký cấp lại tài khoản email sinh viên và về phòng đào tạo — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(33, 'Kỷ Luật Học Đường', 'Quy chế kỷ luật sinh viên? Đi thi gian lận bị phạt thế nào? Quay cóp bài thi bị xử lý sao?', 'Sinh viên vi phạm quy chế thi cử (như mang tài liệu, điện thoại vào phòng thi, quay cóp) sẽ bị xử lý kỷ luật nghiêm khắc từ Đình chỉ thi môn đó, Nhận điểm 0, Cảnh cáo trước toàn trường, cho đến đình chỉ học tập có thời hạn hoặc buộc thôi học nếu tái phạm nhiều lần. Ngoài ra, nếu bạn còn thắc mắc về đồng phục & trang phục hoặc về quy định sử dụng mạng wifi nội bộ của trường, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(34, 'Văn Phòng Khoa CNTT', 'Liên hệ khoa CNTT ở đâu? Số điện thoại khoa Công nghệ thông tin UTH?', 'Văn phòng Khoa Công nghệ thông tin UTH chịu trách nhiệm quản lý chuyên môn ngành CNTT và Khoa học dữ liệu. Văn phòng khoa hỗ trợ sinh viên các vấn đề về: Đăng ký đồ án tốt nghiệp, thực tập doanh nghiệp, cố vấn học tập. Địa chỉ liên hệ đặt tại Khu nhà C, Cơ sở chính. Bên cạnh đó, nếu bạn cũng quan tâm về đồng phục & trang phục, hay về đại hội đoàn, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(35, 'Văn Phòng Khoa Viện', 'Liên hệ Viện Logistics ở đâu? Văn phòng Khoa Kinh tế vận tải nằm ở đâu?', 'Các văn phòng Khoa chuyên ngành (như Viện Logistics và Quản lý chuỗi cung ứng, Khoa Kinh tế vận tải, Khoa Công trình giao thông, Khoa Điện - Điện tử viễn thông) đều có văn phòng trực ban tại các khu nhà chức năng cơ sở chính để hỗ trợ giải quyết lịch học chuyên ngành cho sinh viên. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời gian giữ xe tối đa tại trường và về bãi giữ xe của trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(36, 'Giáo Dục Quốc Phòng', 'Học quân sự ở đâu? Lịch học giáo dục quốc phòng? Đi học quân sự cần chuẩn bị gì?', 'Sinh viên UTH tham gia học môn Giáo dục quốc phòng - An ninh tập trung tại Trung tâm Giáo dục Quốc phòng theo lịch phân bổ của trường. Sinh viên được rèn luyện trong môi trường quân đội nội trú, phải tuân thủ nghiêm ngặt giờ giấc, tác phong quân kỷ và mặc quân phục. Ngoài ra, nếu bạn còn thắc mắc về giáo dục thể chất hoặc về thủ tục xin miễn học thể dục, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(37, 'Giáo Dục Thể Chất', 'Học thể dục ở đâu? Các môn thể dục UTH? Đăng ký học môn thể thao nào?', 'Môn Giáo dục thể chất (Thể dục) tại UTH rất đa dạng, sinh viên được tự chọn đăng ký các môn thể thao yêu thích trên Portal như: Bóng đá, Bóng chuyền, Bóng rổ, Cầu lông, Cờ vua hoặc Võ thuật. Sinh viên phải thi đạt môn này mới đủ điều kiện xét tốt nghiệp. Bên cạnh đó, nếu bạn cũng quan tâm về cấp lại giấy chứng nhận quốc phòng, hay về thủ tục xin miễn học thể dục, cứ hỏi mình thêm nha.', '/dang-ky-hoc-phan'),
+(38, 'Cấp Lại Bảng Điểm', 'Xin cấp bảng điểm học tập ở đâu? Lệ phí in bảng điểm chính thức?', 'Sinh viên cần bảng điểm chính thức (có mộc đỏ của trường) để xin việc làm hoặc nộp hồ sơ học bổng phải làm Đơn xin cấp bảng điểm tại máy tự động hoặc nộp trực tiếp tại Phòng Đào tạo. Lệ phí in bảng điểm được tính theo số lượng bản sao quy định. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về khóa tài khoản Portal và về mượn thiết bị âm thanh, sự kiện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(39, 'Phạt Tiền Thư Viện', 'Làm mất sách thư viện đền tiền thế nào? Quên trả sách thư viện bị phạt bao nhiêu?', 'Sinh viên mượn tài liệu thư viện UTH nếu làm mất hoặc hư hỏng phải mua đền cuốn sách mới tương đương hoặc đền tiền gấp nhiều lần giá trị cuốn sách theo quy chế. Trả sách trễ hạn sẽ bị phạt số tiền tính theo từng ngày trễ hạn và bị tạm khóa thẻ thư viện. Ngoài ra, nếu bạn còn thắc mắc về mượn sách thư viện hoặc về mất thẻ sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(40, 'Nguyện Vọng Bổ Sung', 'Trường có xét tuyển bổ sung không? Điều kiện xét tuyển đợt 2 UTH?', 'Trong trường hợp các ngành học chưa tuyển đủ chỉ tiêu đợt 1, Hội đồng tuyển sinh UTH sẽ thông báo nhận hồ sơ Xét tuyển nguyện vọng bổ sung (Đợt 2) trên trang tuyển sinh chính thức của trường. Thí sinh nộp hồ sơ theo phương thức xét điểm thi tốt nghiệp THPT hoặc học bạ. Bên cạnh đó, nếu bạn cũng quan tâm về đăng ký nguyện vọng vào UTH trên hệ thống của bộ GD&ĐT, hay về tiếp nhận hồ sơ đăng ký xét tuyển học bạ đợt tiếp theo, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(41, 'Bảng Điểm Tiếng Anh', 'Xin bảng điểm bằng tiếng Anh ở đâu? Lệ phí dịch thuật bảng điểm UTH? Cấp bảng điểm song ngữ?', 'Sinh viên có nhu cầu cấp bảng điểm bằng tiếng Anh (hoặc song ngữ) để làm hồ sơ du học, săn học bổng quốc tế hoặc nộp cho doanh nghiệp nước ngoài thì làm đơn đăng ký tại Phòng Đào tạo. Thời gian xử lý và cấp phát từ 3 đến 5 ngày làm việc kèm theo lệ phí in ấn quy định. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời hạn sử dụng của thẻ thư viện và về mượn thiết bị âm thanh, sự kiện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(42, 'Phúc Khảo Đồ Án', 'Đồ án tốt nghiệp có được phúc khảo không? Chấm lại điểm khóa luận tốt nghiệp?', 'Theo quy chế học vụ UTH, điểm bảo vệ Đồ án tốt nghiệp hoặc Khóa luận tốt nghiệp sẽ KHÔNG được chấm phúc khảo. Điểm số cuối cùng do Hội đồng chấm tốt nghiệp quyết định ngay tại buổi bảo vệ công khai. Sinh viên chỉ được quyền khiếu nại nếu có sai sót trong quá trình cộng điểm hoặc nhập điểm vào hệ thống. Ngoài ra, nếu bạn còn thắc mắc về quy chế thi cử hoặc về xét giảm điểm rèn luyện, mình có thể hỗ trợ giải đáp thêm nhé.', '/ket-qua-hoc-tap'),
+(43, 'Khóa Tài Khoản Portal', 'Tại sao tài khoản Portal bị khóa? Lỗi không đăng nhập được trang sinh viên?', 'Tài khoản Portal của sinh viên UTH thường bị khóa vì các lý do sau: Nợ học phí quá hạn quy định; Chưa hoàn thành các khảo sát bắt buộc của trường; Hoặc nhập sai mật khẩu quá 5 lần liên tiếp. Sinh viên cần liên hệ Phòng Đào tạo hoặc Phòng Công tác sinh viên để kiểm tra lý do và mở khóa. Bên cạnh đó, nếu bạn cũng quan tâm về tư vấn tâm lý và hỗ trợ sinh viên gặp áp lực học đường, hay về hủy tư cách đoàn viên, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(44, 'Bãi Giữ Xe Của Trường', 'Bãi xe trường ở đâu? Giá vé gửi xe máy UTH? Gửi xe qua đêm tại trường được không?', 'UTH có bãi giữ xe dành cho sinh viên tại tất cả các cơ sở. Giá vé gửi xe máy áp dụng theo đúng quy định nhà nước. Sinh viên tuyệt đối không được gửi xe qua đêm tại trường trừ các trường hợp đặc biệt được Đoàn trường hoặc Ban quản lý cơ sở cấp phép trước bằng văn bản. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về liên hệ ban quản lý ký túc xá và về quy định sử dụng mạng wifi nội bộ của trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(45, 'Miễn Giảm Anh Em Ruột', 'Anh em ruột cùng học UTH có được giảm học phí? Chính sách giảm học phí gia đình?', 'Nhà trường áp dụng chính sách hỗ trợ học phí cho gia đình có từ 2 anh/chị/em ruột trở lên đang cùng theo học hệ chính quy tại UTH. Mức giảm thường là 10% đến 20% học phí cho người em. Sinh viên cần nộp Giấy khai sinh bản sao và Đơn đề nghị về Phòng Công tác sinh viên đầu học kỳ. Ngoài ra, nếu bạn còn thắc mắc về gia hạn học phí hoặc về bảo hiểm y tế, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(46, 'Đổi Lịch Thi Học Kỳ', 'Làm sao để xin đổi ca thi? Bị trùng lịch thi phải làm thế nào? Trùng giờ thi xử lý sao?', 'Trường hợp sinh viên bị trùng lịch thi 2 môn trong cùng 1 ca hoặc có lý do bất khả kháng (tai nạn, nằm viện), sinh viên phải mang minh chứng đến Phòng Đào tạo trước ngày thi ít nhất 3 ngày để làm đơn xin chuyển ca thi hoặc đăng ký thi ghép vào đợt thi của lớp khác. Bên cạnh đó, nếu bạn cũng quan tâm về bảo lưu kết quả, hay về quy định số lần cảnh báo học vụ, cứ hỏi mình thêm nha.', '/lich-hoc-trong-tuan'),
+(47, 'Quên Mật Khẩu Portal', 'Làm sao lấy lại mật khẩu Portal? Quên pass trang sinh viên UTH?', 'Nếu quên mật khẩu đăng nhập hệ thống Portal, sinh viên bấm vào nút "Quên mật khẩu" trên giao diện đăng nhập để nhận mã khôi phục qua Email sinh viên (@ut.edu.vn). Nếu không làm được, sinh viên mang Thẻ sinh viên đến trực tiếp Phòng Đào tạo để được cấp lại mật khẩu mới. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về khóa tài khoản Portal và về đăng ký cấp lại tài khoản email sinh viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(48, 'Phòng Y Tế Trường', 'Trạm y tế trường nằm ở đâu? Khám sức khỏe sinh viên đầu năm ở đâu?', 'Phòng Y tế UTH nằm tại khu vực tầng trệt cơ sở chính. Đây là nơi tiếp nhận, sơ cứu và cấp phát thuốc cơ bản miễn phí cho sinh viên khi gặp các vấn đề về sức khỏe trong quá trình học tập tại trường. Đồng thời là nơi tổ chức khám sức khỏe định kỳ bắt buộc cho tân sinh viên. Ngoài ra, nếu bạn còn thắc mắc về đồng phục & trang phục hoặc về quy định sử dụng mạng wifi nội bộ của trường, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(49, 'Học Bổng Liên Kết', 'Học bổng du học UTH? Chương trình trao đổi sinh viên quốc tế?', 'UTH liên kết với nhiều trường Đại học lớn tại Hàn Quốc, Nhật Bản, Hà Lan, Anh Quốc để triển khai các chương trình trao đổi sinh viên và học bổng du học hệ 2+2 hoặc 3+1. Sinh viên có học lực Giỏi và đạt chuẩn tiếng Anh (IELTS/TOEFL) cao sẽ được xét duyệt hồ sơ tham gia. Bên cạnh đó, nếu bạn cũng quan tâm về học bổng khuyến khích, hay về hoạt động đoàn hội, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(50, 'Sinh Hoạt Công Dân', 'Tuần sinh hoạt công dân học khi nào? Không học sinh hoạt công dân có bị sao không?', 'Tuần sinh hoạt công dân - học sinh sinh viên được tổ chức bắt buộc vào đầu mỗi năm học. Sinh viên phải tham gia đầy đủ và làm bài kiểm tra thu hoạch đạt yêu cầu. Vắng mặt không lý do sẽ bị trừ điểm rèn luyện nghiêm khắc và xét kỷ luật tùy mức độ. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về giải chạy sinh viên và về học bổng khuyến khích — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(51, 'Chuyển Cơ Sở Học Tập', 'Sinh viên có được đổi cơ sở học không? Đang học Quận 12 chuyển qua Bình Thạnh?', 'Việc phân bổ cơ sở học tập (Bình Thạnh hoặc Quận 12) phụ thuộc hoàn toàn vào chuyên ngành và kế hoạch đào tạo của từng Khoa/Viện. Sinh viên KHÔNG được tự ý xin chuyển cơ sở học tập cá nhân trừ khi có sự điều chỉnh quy hoạch lớp học từ phía Ban giám hiệu nhà trường. Ngoài ra, nếu bạn còn thắc mắc về chương trình đào tạo hoặc về xin hoãn đi thực tập tốt nghiệp, mình có thể hỗ trợ giải đáp thêm nhé.', '/chuong-trinh-khung'),
+(52, 'Mượn Phòng Học', 'Làm sao để mượn phòng học làm hoạt động? Thủ tục mượn hội trường UTH?', 'Các Ban cán sự lớp hoặc Câu lạc bộ muốn mượn phòng học, giảng đường hoặc Hội trường để tổ chức sinh hoạt, họp hành, tập văn nghệ phải làm Đơn xin mượn phòng (có xác nhận của Bí thư Đoàn trường hoặc Trưởng Khoa) nộp về Phòng Quản trị thiết bị trước ít nhất 2 ngày. Bên cạnh đó, nếu bạn cũng quan tâm về thời hạn sử dụng của thẻ thư viện, hay về khóa tài khoản Portal, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(53, 'Hỗ Trợ Khởi Nghiệp', 'Cuộc thi khởi nghiệp sinh viên UTH? Quỹ hỗ trợ ý tưởng sáng tạo?', 'Nhà trường thường xuyên tổ chức các cuộc thi Ý tưởng khởi nghiệp sáng tạo sinh viên UTH. Các dự án tiềm năng và đạt giải cao sẽ được Câu lạc bộ Khởi nghiệp của trường hỗ trợ không gian làm việc, kết nối với các quỹ đầu tư và cố vấn chuyên môn để phát triển thành dự án thực tế. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về sinh viên 5 tốt và về khen thưởng sinh viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(54, 'Giấy Chứng Nhận Tạm Thời', 'Xin giấy chứng nhận sinh viên tạm thời ở đâu? Thời gian cấp giấy xác nhận là bao lâu?', 'Để phục vụ các nhu cầu cấp bách (như làm hồ sơ xin việc, chứng minh thông tin khi chưa có thẻ nhựa), sinh viên đăng ký xin cấp Giấy chứng nhận sinh viên tạm thời tại văn phòng Phòng Công tác sinh viên. Giấy xác nhận này có mộc đỏ và giá trị pháp lý ngắn hạn. Ngoài ra, nếu bạn còn thắc mắc về bảng điểm tiếng anh hoặc về quên mật khẩu Portal, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(55, 'Văn Phòng Đoàn Thanh Niên', 'Văn phòng Đoàn trường UTH ở đâu? Đăng ký sổ Đoàn, nộp sổ Đoàn ở đâu?', 'Văn phòng Đoàn Thanh niên - Hội Sinh viên UTH đặt tại cơ sở chính Võ Oanh. Đây là nơi quản lý toàn bộ hồ sơ đoàn viên, tiếp nhận sổ Đoàn của sinh viên đầu năm học, xét duyệt các danh hiệu thi đua, cộng điểm rèn luyện và tổ chức các chiến dịch lớn như Mùa hè xanh, Tiếp sức mùa thi. Bên cạnh đó, nếu bạn cũng quan tâm về sinh hoạt công dân, hay về mượn thiết bị âm thanh, sự kiện, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(56, 'Khảo Sát Ý Kiến Sinh Viên', 'Khảo sát môn học làm ở đâu? Không làm khảo sát giảng viên có bị sao không?', 'Cuối mỗi học kỳ, UTH bắt buộc sinh viên phải tham gia Khảo sát ý kiến về hoạt động giảng dạy của giảng viên trực tuyến trên trang Portal. Sinh viên cố tình không hoàn thành khảo sát đúng hạn sẽ bị tạm khóa chức năng xem điểm thi học kỳ và khóa lịch đăng ký môn học. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về hoạt động đoàn hội và về học bổng liên kết — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(57, 'Đóng Lệ Phí Thi Lại', 'Thi lại có tốn tiền không? Lệ phí thi lại đóng ở đâu?', 'Đối với các môn học bị điểm F, sinh viên áp dụng quy chế học chế tín chỉ của UTH là phải đăng ký học lại và đóng tiền học phí tính theo số tín chỉ môn đó giống như học mới, trường KHÔNG tổ chức kỳ thi lại độc lập thu phí riêng như hệ niên chế cũ. Ngoài ra, nếu bạn còn thắc mắc về lệ phí xét tuyển hồ sơ đầu vào hoặc về miễn giảm anh em ruột, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(58, 'Thực Tập Tốt Nghiệp', 'Lịch đi thực tập của sinh viên năm cuối? Xin giấy giới thiệu thực tập ở đâu?', 'Sinh viên năm cuối đủ điều kiện sẽ tham gia học phần Thực tập tốt nghiệp. Sinh viên đến văn phòng Khoa/Viện chủ quản để nhận Giấy giới thiệu thực tập nộp cho doanh nghiệp. Sau khi kết thúc, phải nộp lại Báo cáo thực tập có nhận xét và mộc tròn của công ty. Bên cạnh đó, nếu bạn cũng quan tâm về quy định tham quan kiến tập thực tế tại doanh nghiệp, hay về thời gian nhận bằng tốt nghiệp, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(59, 'Đồ Án Tốt Nghiệp', 'Điều kiện được làm đồ án ra trường? Điểm GPA bao nhiêu thì được làm khóa luận tốt nghiệp?', 'Điều kiện để sinh viên UTH được giao đề tài làm Đồ án/Khóa luận tốt nghiệp: Tính đến học kỳ xét, sinh viên không bị cảnh báo học vụ; Tích lũy tối thiểu 80% đến 90% số tín chỉ toàn khóa; Điểm trung bình GPA đạt mức quy định riêng của từng Khoa/Viện chuyên ngành. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đồ án tốt nghiệp đạt điểm f xử lý sao và về quy trình làm thủ tục nhập học trực tiếp tại trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(60, 'Khen Thưởng Sinh Viên', 'Sinh viên xuất sắc được thưởng gì? Tiêu chuẩn xét khen thưởng danh hiệu học tập?', 'Kết thúc mỗi năm học, nhà trường tiến hành xét khen thưởng cho sinh viên đạt danh hiệu Sinh viên Xuất sắc (GPA >= 3.6/4.0) và Sinh viên Giỏi (GPA >= 3.2/4.0) kèm theo điểm rèn luyện loại Tốt trở lên. Sinh viên được tặng giấy khen của Hiệu trưởng và nhận tiền thưởng tương ứng. Ngoài ra, nếu bạn còn thắc mắc về đăng ký tham gia câu lạc bộ hoặc về mượn thiết bị âm thanh, sự kiện, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(61, 'Mùa Hè Xanh UTH', 'Đăng ký Mùa hè xanh ở đâu? Tiêu chí tuyển chiến sĩ MHX? Đi MHX được bao nhiêu ĐRL?', 'Chiến dịch tình nguyện Mùa Hè Xanh UTH do Đoàn trường tổ chức vào tháng 7 hằng năm. Sinh viên đăng ký qua form chính thức của Đoàn Khoa/Viện. Tiêu chí tuyển chọn dựa trên sức khỏe, đạo đức tốt và tích cực tham gia phong trào. Hoàn thành chiến dịch được cộng tối đa 15-20 điểm rèn luyện. Bên cạnh đó, nếu bạn cũng quan tâm về khen thưởng sinh viên, hay về hội thảo kỹ năng, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(62, 'Tiếp Sức Mùa Thi', 'Đăng ký Tiếp sức mùa thi UTH? Lịch chạy chương trình TSMT?', 'Chương trình Tiếp sức mùa thi diễn ra vào tháng 6 hằng năm nhằm hỗ trợ thí sinh thi THPT Quốc tế. Sinh viên UTH đăng ký tham gia thông qua Hội Sinh viên trường. Chiến sĩ TSMT sẽ trực tại các điểm trường thi để phân luồng giao thông, hỗ trợ nước uống và chỉ đường. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về văn phòng đoàn thanh niên và về các câu lạc bộ — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(63, 'Xuân Tình Nguyện', 'Lịch chạy Xuân tình nguyện UTH? Đăng ký đi XTN ở đâu? Chi phí đóng góp XTN?', 'Chiến dịch Xuân Tình Nguyện UTH diễn ra vào dịp cận Tết Nguyên Đán. Các đội hình sẽ thực hiện hoạt động gói bánh chưng, tặng quà cho trẻ em cơ nhỡ, người già neo đơn và dọn dẹp nghĩa trang liệt sĩ. Sinh viên đăng ký qua Fanpage Đoàn - Hội của Khoa/Viện. Ngoài ra, nếu bạn còn thắc mắc về sinh viên 5 tốt hoặc về mượn thiết bị âm thanh, sự kiện, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(64, 'Giải Chạy Sinh Viên', 'Giải chạy bộ UTH? Đăng ký chạy marathon trường ở đâu? Minh chứng hoàn thành giải chạy?', 'UTH thường xuyên tổ chức hoặc liên kết các giải chạy bộ (Marathon trực tuyến/trực tiếp qua app Strava). Sinh viên hoàn thành cự ly quy định (thường là 21km hoặc 42km tích lũy) sẽ đạt tiêu chí "Thể lực tốt" phục vụ xét danh hiệu Sinh viên 5 Tốt và được cộng ĐRL. Bên cạnh đó, nếu bạn cũng quan tâm về khen thưởng sinh viên, hay về đăng ký tham gia hiến máu đợt hè, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(65, 'Ngày Hội Sáng Tạo', 'Cuộc thi ý tưởng sáng tạo UTH? Sáng tạo trẻ sinh viên giao thông?', 'Ngày hội Sáng tạo trẻ UTH là sân chơi khoa học công nghệ, trưng bày các mô hình, phần mềm độc đáo do sinh viên tự nghiên cứu (robot, mô hình cầu đường, app quản lý vận tải). Đề tài đạt giải cao sẽ được hỗ trợ kinh phí tham gia các cuộc thi cấp Thành phố. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chiến sĩ tình nguyện và về hủy tư cách đoàn viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(66, 'Chiến Sĩ Tình Nguyện', 'Danh hiệu Chiến sĩ tình nguyện xuất sắc? Làm sao để được tặng bằng khen MHX?', 'Kết thúc mỗi chiến dịch tình nguyện (MHX, XTN, TSMT), Ban chỉ huy chiến dịch sẽ tổ chức họp xét để tuyên dương các cá nhân có đóng góp xuất sắc. Chiến sĩ đạt danh hiệu sẽ được tặng Giấy khen của Hiệu trưởng hoặc Ủy ban Hội Sinh viên Thành phố. Ngoài ra, nếu bạn còn thắc mắc về tiếp sức mùa thi hoặc về đăng ký tham gia câu lạc bộ, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(67, 'Đại Hội Đoàn - Hội', 'Lịch tổ chức Đại hội Đại biểu? Đi bầu cử Đoàn Thanh niên ở đâu?', 'Đại hội Đại biểu Đoàn TNCS Hồ Chí Minh và Đại hội Hội Sinh viên Việt Nam trường UTH được tổ chức định kỳ để bầu ra Ban chấp hành mới. Sinh viên là Đại biểu chính thức sẽ tham gia họp và bỏ phiếu tại Hội trường lớn cơ sở chính Võ Oanh. Bên cạnh đó, nếu bạn cũng quan tâm về học bổng liên kết, hay về văn phòng khoa CNTT, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(68, 'Cắm Trại Truyền Thống', 'Hội trại truyền thống UTH học kỳ nào? Địa điểm cắm trại trường? Chi phí hội trại?', 'Hội trại truyền thống UTH thường được tổ chức nhân dịp kỷ niệm ngày thành lập Đoàn 26/03 hoặc ngày truyền thống trường. Địa điểm tổ chức có thể tại sân trường cơ sở Quận 12 hoặc các khu du lịch dã ngoại. Hội trại gồm các hoạt động dựng trại, trò chơi lớn và đêm lửa trại. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về các câu lạc bộ và về chiến sĩ đỏ — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(69, 'Giải Bóng Đá UTH', 'Giải bóng đá nam/nữ trường UTH? Đăng ký đá banh giải trường ở đâu?', 'Giải bóng đá truyền thống sinh viên UTH tổ chức hằng năm tại sân bóng cỏ nhân tạo. Các đội bóng tham gia tranh tài theo đơn vị lớp hoặc Liên quân Khoa/Viện. Lịch thi đấu và thể lệ được Ban thể thao thuộc Hội sinh viên trường công bố công khai đầu học kỳ 2. Ngoài ra, nếu bạn còn thắc mắc về hoạt động "hiến máu tình nguyện" lần 2 trong năm hoặc về tham gia hiến máu có được nghỉ học, mình có thể hỗ trợ giải đáp thêm nhé.', '/dang-ky-hoc-phan'),
+(70, 'Văn Nghệ Tiếng Hát', 'Cuộc thi tiếng hát sinh viên UTH? Cuộc thi văn nghệ UTH Got Talent?', 'Cuộc thi văn nghệ truyền thống (Tiếng hát sinh viên UTH) là nơi tìm kiếm các tài năng âm nhạc, nhạc cụ, nhảy hiện đại, múa dân gian. Sinh viên đăng ký tiết mục đơn ca, song ca hoặc tốp ca trực tiếp với Đội văn nghệ xung kích của trường để tham gia vòng sơ loại. Bên cạnh đó, nếu bạn cũng quan tâm về chính sách học bổng tuyển sinh, hay về hội thảo kỹ năng, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(71, 'Chiến Sĩ Đỏ - Hiến Máu', 'Đội tình nguyện hiến máu UTH? Câu lạc bộ Hành Trình Đỏ UTH?', 'Câu lạc bộ Hành Trình Đỏ / Đội Tình nguyện Hiến máu UTH là đơn vị nòng cốt phối hợp với Trung tâm hiến máu nhân đạo TP.HCM để tổ chức các đợt hiến máu tại trường. Thành viên đội sẽ hỗ trợ điều phối, hướng dẫn sinh viên điền form và chăm sóc sinh viên sau hiến máu. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về giải chạy sinh viên và về đại hội đoàn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(72, 'Minh Chứng ĐRL', 'Nộp minh chứng hoạt động ở đâu? Quên nộp minh chứng có được cộng điểm rèn luyện?', 'Khi tham gia các hoạt động bên ngoài trường (Hiến máu, Tình nguyện hè, Giải chạy), sinh viên phải giữ lại Giấy chứng nhận bản cứng hoặc chụp màn hình kết quả. Sau đó, đăng nhập hệ thống Portal nộp minh chứng đúng thời hạn quy định để Lớp trưởng xét cộng ĐRL. Ngoài ra, nếu bạn còn thắc mắc về bảng điểm tiếng anh hoặc về cấp lại bảng điểm, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(73, 'Điểm Rèn Luyện F', 'Điểm rèn luyện dưới 50 bị phạt thế nào? ĐRL loại Yếu có được tốt nghiệp không?', 'Sinh viên có điểm rèn luyện xếp loại Yếu (dưới 50 điểm) hoặc Kém (dưới 35 điểm) trong một năm học sẽ bị đưa vào danh sách kỷ luật cảnh cáo. Nếu bị xếp loại yếu, kém 2 học kỳ liên tiếp sẽ bị đình chỉ học tập 1 học kỳ; nếu bị lần thứ 3 sẽ bị buộc thôi học. Bên cạnh đó, nếu bạn cũng quan tâm về quy chế thi cử, hay về đăng ký môn học, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(74, 'Ngày Hội Việc Làm', 'UTH Job Fair tổ chức khi nào? Sinh viên năm nhất có được tham gia ngày hội việc làm?', 'Ngày hội việc làm UTH Job Fair diễn ra định kỳ hằng năm tại sân trường cơ sở chính. Hoạt động này thu hút hàng chục doanh nghiệp lớn đến phỏng vấn tuyển dụng trực tiếp, nhận hồ sơ thực tập. Tất cả sinh viên các năm đều được tham gia tự do để tìm kiếm cơ hội. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chính sách học bổng tuyển sinh và về đại hội đoàn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(75, 'Hội Thảo Kỹ Năng', 'Lớp học kỹ năng mềm UTH? Đăng ký chuyên đề kỹ năng ở đâu? Có tính ĐRL không?', 'Phòng Công tác sinh viên phối hợp với các chuyên gia tổ chức các buổi Hội thảo kỹ năng mềm (Kỹ năng viết CV, kỹ năng giao tiếp, quản lý thời gian). Sinh viên quét mã QR điểm danh tại hội trường sẽ được tự động cộng 2-3 điểm rèn luyện vào hệ thống Portal. Ngoài ra, nếu bạn còn thắc mắc về ngày hội việc làm hoặc về văn phòng đoàn thanh niên, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(76, 'Học phí chương trình tiên tiến (trước đây gọi là Chất lượng cao - CLC)', 'Học phí hệ chất lượng cao là bao nhiêu? Tại sao học phí CLC lại cao hơn đại trà? Tổng tiền học phí CLC một năm?', 'UTH hiện gọi chương trình Chất lượng cao trước đây là "Chương trình tiên tiến". Mức học phí chương trình tiên tiến áp dụng cho tân sinh viên khóa 2026 là 1.120.000đ/tín chỉ (khóa 2025 áp dụng mức 980.000đ/tín chỉ). Với chương trình đào tạo chuẩn hóa 120 tín chỉ toàn khóa, tổng học phí chương trình tiên tiến trọn khóa (học đúng tiến độ, chưa gồm các khoản phí khác) theo mức khóa 2026 vào khoảng 134 triệu đồng. Mức phí chương trình tiên tiến cao hơn chương trình chuẩn do quy mô lớp nhỏ, tăng cường thời lượng tiếng Anh chuyên ngành, cơ sở vật chất hiện đại và có các học phần trải nghiệm/kiến tập tại doanh nghiệp. Mỗi khóa nhập học có mức học phí niêm yết riêng và trường cam kết không tăng học phí trong 3 năm đầu tính từ năm nhập học. Bên cạnh đó, nếu bạn cũng quan tâm về miễn giảm anh em ruột, hay về chính sách hỗ trợ bảo hiểm tai nạn, cứ hỏi mình thêm nha.', '/cong-thanh-toan'),
+(77, 'Quy trình chấm Điểm rèn luyện (ĐRL) hằng kỳ', 'Cách chấm điểm rèn luyện như thế nào? Quy trình họp xét ĐRL của lớp? Khi nào bắt đầu tự đánh giá ĐRL?', 'Quy trình chấm Điểm rèn luyện hằng kỳ tại UTH được thực hiện qua 3 bước bắt buộc: - Sinh viên đăng nhập hệ thống Portal tự đánh giá điểm cá nhân theo các mục quy định. - Tập thể lớp tổ chức họp dưới sự chủ trì của Ban cán sự lớp để thông qua và chấm điểm cho từng sinh viên. - Cố vấn học tập (Giảng viên chủ nhiệm) phê duyệt và gửi danh sách chính thức về Phòng Công tác sinh viên để lưu hệ thống. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về cảnh báo học vụ và về thủ tục phúc khảo điểm quá trình — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(78, 'Thẻ bảo hiểm y tế điện tử (VssID)', 'Xem thẻ bảo hiểm y tế ở đâu? Cách đăng ký tài khoản VssID sinh viên? Mất thẻ bảo hiểm y tế giấy phải làm sao?', 'Nhà trường không cấp thẻ Bảo hiểm y tế (BHYT) bằng giấy vật lý cho sinh viên nữa. Sau khi đóng lệ phí gia hạn BHYT thành công trên cổng thanh toán của trường, sinh viên tải ứng dụng VssID (Bảo hiểm xã hội số) trên điện thoại và đăng ký tài khoản bằng mã số bảo hiểm của mình để sử dụng thẻ BHYT điện tử khi đi khám chữa bệnh tại các bệnh viện. Ngoài ra, nếu bạn còn thắc mắc về chính sách hỗ trợ bảo hiểm tai nạn hoặc về bảo hiểm y tế, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(79, 'Chuẩn tin học quốc tế nâng cao', 'Chứng chỉ tin học IC3 hay MOS tốt hơn? Quy đổi điểm tin học đầu ra như thế nào?', 'UTH công nhận cả hai chứng chỉ quốc tế là MOS và IC3 để xét đạt chuẩn đầu ra Tin học. Đối với chứng chỉ MOS, sinh viên phải đạt từ 3 kỹ năng độc lập trở lên (gồm Word, Excel và Powerpoint). Đối với chứng chỉ IC3, sinh viên phải thi đạt cả 3 phần (Living Online, Key Applications, và Computing Fundamentals). Sinh viên mang chứng chỉ gốc đến Phòng Đào tạo để làm thủ tục hậu kiểm công nhận quy đổi. Bên cạnh đó, nếu bạn cũng quan tâm về cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH, hay về đăng ký thi lại chuẩn đầu ra, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(80, 'Quy định sử dụng mạng Wifi nội bộ của trường', 'Cách kết nối wifi trường UTH? Mật khẩu wifi sinh viên là gì? Tại sao không vào được wifi trường?', 'Nhà trường cấp hệ thống mạng Wifi miễn phí tại tất cả các khu vực giảng đường, thư viện và sân trường cho sinh viên. Để kết nối, sinh viên chọn mạng Wifi dành riêng cho người học, sau đó đăng nhập bằng Mã số sinh viên (Username) và Mật khẩu Portal cá nhân của mình. Hệ thống sẽ tự động chặn các truy cập vào trang web độc hại hoặc tải tài liệu lậu dung lượng quá lớn làm nghẽn băng thông. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về văn phòng khoa viện và về liên hệ ban quản lý ký túc xá — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(81, 'Đăng ký tham gia Câu lạc bộ (CLB) đầu năm học', 'Làm sao để vào câu lạc bộ của trường? Ngày hội các câu lạc bộ tổ chức khi nào? Tuyển thành viên CLB UTH?', 'Vào khoảng tháng 9 và tháng 10 hằng năm (đầu học kỳ 1), Hội Sinh viên trường UTH tổ chức Ngày hội các Câu lạc bộ (CLB Festival) tại sân trường cơ sở chính. Tại đây, tất cả các CLB (Học thuật, Nghệ thuật, Thể thao, Tình nguyện) sẽ đặt gian hàng giới thiệu và phát đơn tuyển thành viên mới trực tiếp hoặc trực tuyến qua các trang Fanpage chính thức của mình. Ngoài ra, nếu bạn còn thắc mắc về văn phòng đoàn thanh niên hoặc về sinh viên 5 tốt, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(82, 'Đăng ký cấp lại tài khoản Email sinh viên (@ut.edu.vn)', 'Làm sao để đổi mật khẩu email sinh viên? Bị mất email của trường xử lý thế nào?', 'Email sinh viên định dạng [MSSV]@ut.edu.vn được nhà trường cấp miễn phí cho toàn bộ người học để liên lạc và nhận các thông báo quan trọng. Nếu bị khóa tài khoản hoặc quên mật khẩu email, sinh viên mang Thẻ sinh viên đến trực tiếp văn phòng Trung tâm Dữ liệu và Công nghệ thông tin của trường tại khu nhà chức năng cơ sở chính để được hỗ trợ reset cấp lại mật khẩu ngay trong ngày. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về quên mật khẩu Portal, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(83, 'Hoạt động "Hiến máu tình nguyện" lần 2 trong năm', 'Một năm trường tổ chức hiến máu mấy lần? Lịch hiến máu đợt 2 của trường?', 'Nhằm đáp ứng nhu cầu cung cấp máu cứu người, Đoàn trường và Hội sinh viên UTH phối hợp tổ chức hoạt động hiến máu nhân đạo định kỳ 2 lần trong một năm học (thường rơi vào Học kỳ 1 và Học kỳ 2). Lịch chi tiết của từng đợt sẽ được đăng tải sớm trên trang Portal trước 1 tuần để sinh viên đăng ký tham gia và nhận quyền lợi cộng điểm rèn luyện. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về xuân tình nguyện và về mượn thiết bị âm thanh, sự kiện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(84, 'Chế độ miễn giảm học phí cho con em diện chính sách', 'Con thương binh có được giảm học phí không? Thủ tục xin miễn học phí diện hộ nghèo? Nộp hồ sơ giảm học phí ở đâu?', 'Sinh viên thuộc diện con thương binh, bệnh binh, người có công với cách mạng, sinh viên dân tộc thiểu số vùng đặc biệt khó khăn, hoặc sinh viên thuộc hộ nghèo/hộ cận nghèo sẽ được hưởng chính sách miễn hoặc giảm học phí theo đúng quy định của Nhà nước. Sinh viên cần chuẩn bị Sổ hộ nghèo, Giấy chứng nhận diện chính sách bản công chứng nộp về Phòng Công tác sinh viên để xét duyệt đầu năm học. Ngoài ra, nếu bạn còn thắc mắc về đóng lệ phí thi lại hoặc về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(85, 'Quy định mượn học cụ, thiết bị tại phòng thí nghiệm', 'Làm sao để mượn đồ phòng thí nghiệm làm đồ án? Quy định mượn thiết bị đo đạc?', 'Sinh viên các ngành kỹ thuật (như Công trình, Điện - Điện tử, CNTT) cần mượn thiết bị, học cụ tại các phòng thí nghiệm, xưởng thực hành để làm đồ án hoặc bài tập lớn phải có Giấy đề xuất mượn thiết bị do Giảng viên hướng dẫn ký duyệt. Sinh viên nộp giấy này cho Cán bộ quản lý phòng thí nghiệm, xuất trình Thẻ sinh viên để ký sổ mượn và có trách nhiệm bảo quản, hoàn trả nguyên vẹn đúng thời hạn. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về liên hệ ban quản lý ký túc xá, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(86, 'Tiếp nhận hồ sơ Đăng ký xét tuyển Học bạ đợt tiếp theo', 'Khi nào trường nhận hồ sơ học bạ đợt 2? Cách nộp học bạ online vào trường UTH?', 'Hội đồng tuyển sinh UTH tổ chức xét tuyển học bạ THPT thành nhiều đợt trong năm. Thí sinh đăng ký nộp hồ sơ trực tuyến thông qua trang Tuyển sinh chính thức của trường, điền đầy đủ điểm số các môn thuộc tổ hợp xét tuyển và tải ảnh chụp học bạ lên hệ thống. Sau khi có kết quả trúng tuyển tạm thời, thí sinh phải nộp hồ sơ bản giấy về trường để đối chiếu xác thực thông tin. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên và về nguyện vọng bổ sung — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(87, 'Thủ tục xin tạm hoãn thi học kỳ', 'Bị ốm đột xuất không đi thi được làm sao? Cách xin hoãn thi học kỳ? Đơn xin hoãn thi nộp ở đâu?', 'Nếu gặp lý do bất khả kháng như tai nạn hoặc bệnh tật phải nằm viện điều trị ngay vào ngày thi kết thúc học phần, sinh viên phải làm Đơn xin hoãn thi kèm theo Giấy ra viện hoặc Giấy xác nhận có mộc tròn của bệnh viện nộp về Phòng Đào tạo trong vòng tối đa 3 ngày làm việc kể từ ngày thi của môn đó. Môn học xin hoãn thi thành công sẽ được chuyển điểm sang đợt thi bổ sung hoặc thi ghép cùng khóa sau mà không bị tính điểm 0. Ngoài ra, nếu bạn còn thắc mắc về cách tính điểm hoặc về bảo lưu kết quả, mình có thể hỗ trợ giải đáp thêm nhé.', '/lich-hoc-trong-tuan'),
+(88, 'Quy chế quản lý thông tin và tài sản số của sinh viên', 'Có được chia sẻ tài khoản Portal cho người khác không? Quy định bảo mật thông tin sinh viên UTH?', 'Theo quy định an ninh thông tin của UTH, tài khoản Portal và mật khẩu cá nhân là tài sản số độc quyền của cá nhân sinh viên đó. Sinh viên tuyệt đối không được chia sẻ tài khoản này cho bất kỳ ai khác. Mọi hành vi tự ý chia sẻ tài khoản dẫn đến việc sai lệch dữ liệu đăng ký môn học, kết quả học tập hoặc phát tán thông tin sai sự thật trên hệ thống sẽ bị xử lý kỷ luật nghiêm khắc từ mức cảnh cáo đến đình chỉ học tập. Bên cạnh đó, nếu bạn cũng quan tâm về phạt tiền thư viện, hay về khảo sát ý kiến sinh viên, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(89, 'Quy định tham quan kiến tập thực tế tại doanh nghiệp', 'Sinh viên năm mấy được đi kiến tập? Đi kiến tập doanh nghiệp có bắt buộc không?', 'Hoạt động tham quan kiến tập thực tế tại doanh nghiệp, nhà máy, cảng biển là một học phần bắt buộc hoặc hoạt động bổ trợ bổ ích được các Khoa/Viện tổ chức cho sinh viên (thường dành cho sinh viên năm 2 hoặc năm 3). Hoạt động này giúp sinh viên tiếp cận môi trường làm việc thực tế. Sinh viên tham gia phải tuân thủ nghiêm ngặt giờ giấc điều phối của giảng viên trưởng đoàn và mặc đồng phục trường lịch sự. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thủ tục chuyển ngành và về thời gian nhận bằng tốt nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(90, 'Tư vấn tâm lý và hỗ trợ sinh viên gặp áp lực học đường', 'Trường có phòng tư vấn tâm lý không? Bị stress áp lực học tập thì liên hệ ai hỗ trợ?', 'Nhằm hỗ trợ giải tỏa các áp lực về học tập, cuộc sống hoặc các vấn đề tâm lý cá nhân, UTH có Trung tâm Tư vấn tâm lý sinh viên trực thuộc Phòng Công tác sinh viên. Tại đây, các chuyên gia tâm lý sẽ lắng nghe, chia sẻ và tư vấn định hướng hoàn toàn miễn phí và bảo mật tuyệt đối thông tin cho sinh viên. Sinh viên có thể đặt lịch hẹn tư vấn trực tuyến qua trang hỗ trợ hoặc đến gặp trực tiếp tại văn phòng nhà A. Ngoài ra, nếu bạn còn thắc mắc về cấp lại bảng điểm hoặc về đăng ký cấp lại tài khoản email sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(106, 'Rút hồ sơ thôi học', 'rut ho so, thoi hoc, xoa ten, khong hoc nua, xin thoi hoc, nghi hoc luon', 'Sinh viên muốn xin thôi học và rút hồ sơ gốc (Học bạ, Bằng tốt nghiệp THPT) phải làm đơn theo mẫu của trường, xin ý kiến xác nhận không nợ sách Thư viện, không nợ học phí, sau đó nộp về Phòng Đào tạo để ra quyết định xóa tên và trả lại hồ sơ. Bên cạnh đó, nếu bạn cũng quan tâm về chỉ tiêu tuyển sinh dự kiến năm 2026, hay về tiếp nhận hồ sơ đăng ký xét tuyển học bạ đợt tiếp theo, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(107, 'Đăng ký thi lại chuẩn đầu ra', 'thi lai anh van, thi lai tin hoc, nop don thi lai cdr, dang ky thi tieng anh', 'Trung tâm Ngoại ngữ và Trung tâm Tin học UTH tổ chức các đợt thi đánh giá chuẩn đầu ra định kỳ hằng tháng. Sinh viên theo dõi lịch thông báo, đăng ký và đóng lệ phí dự thi trực tuyến trên trang của Trung tâm trước ngày thi ít nhất 10 ngày. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chuẩn tin học quốc tế nâng cao và về cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(108, 'Xét giảm điểm rèn luyện', 'tru diem ren luyen, khieu nai drl, mo cong drl, cham lai drl, kieu nai drl', 'Nếu phát hiện điểm rèn luyện hiển thị trên Portal bị sai sót hoặc bị trừ điểm không rõ lý do, sinh viên làm đơn khiếu nại gửi Ban cán sự lớp và Cố vấn học tập trong thời gian 5 ngày kể từ khi công bố kết quả dự kiến để được kiểm tra, điều chỉnh. Ngoài ra, nếu bạn còn thắc mắc về thủ tục xin tạm hoãn thi học kỳ hoặc về cách tính điểm, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(109, 'Quy trình vay vốn ngân hàng', 'vay von ngan hang, giay xac nhan vay von, ngan hang chinh sach, don xin vay von', 'Sinh viên thuộc diện đối tượng được vay vốn tín dụng học tập mang hộ khẩu và minh chứng đối tượng đến Phòng Công tác sinh viên để xin cấp "Giấy xác nhận là sinh viên của trường". Sau đó mang giấy này về địa phương để làm thủ tục giải ngân tại Ngân hàng Chính sách Xã hội. Bên cạnh đó, nếu bạn cũng quan tâm về miễn giảm anh em ruột, hay về gia hạn học phí, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(110, 'Chính sách Học bổng tuyển sinh', 'hoc bong tuyen sinh, thu khoa, kien quoc, hoc bong dau vao, khuyen khich dau vao', 'UTH cấp học bổng toàn phần hoặc bán phần (miễn 50% - 100% học phí năm đầu) cho các tân sinh viên đạt danh hiệu Thủ khoa trường, Thủ khoa ngành, hoặc các thí sinh đạt điểm cao xuất sắc trong kỳ thi tốt nghiệp THPT và kỳ thi Đánh giá năng lực. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đăng ký tham gia hiến máu đợt hè và về ngày hội sáng tạo — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(111, 'Thời gian giữ xe tối đa tại trường', 'gui xe qua dem, mat xe, quen lay xe, giu xe may, bai xe mo cua den may gio', 'Bãi giữ xe trường UTH mở cửa từ 6h00 đến 22h00 hằng ngày. Sinh viên không được để xe lại bãi qua đêm. Trường hợp xe bị hư hỏng bắt buộc phải để lại, sinh viên phải báo cáo và đăng ký thông tin với Đội bảo vệ trực ban của trường để được quản lý. Ngoài ra, nếu bạn còn thắc mắc về quy định sử dụng mạng wifi nội bộ của trường hoặc về liên hệ ban quản lý ký túc xá, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(112, 'Thủ tục phúc khảo điểm quá trình', 'phuc khao diem thanh phan, xem lai diem giua ky, diem qua trinh bi sai, sửa điểm', 'Điểm quá trình (điểm chuyên cần, bài tập, giữa kỳ) do Giảng viên bộ môn quản lý và công bố trên lớp. Nếu có thắc mắc, sinh viên phải phản hồi trực tiếp với Giảng viên trước khi môn học kết thúc. Khi điểm đã nộp về trường, giảng viên mới không thể tự ý chỉnh sửa. Bên cạnh đó, nếu bạn cũng quan tâm về học cải thiện, hay về đổi lịch thi học kỳ, cứ hỏi mình thêm nha.', '/ket-qua-hoc-tap'),
+(113, 'Tham gia hiến máu có được nghỉ học', 'hien mau co duoc nghi, xin nghi hoc hien mau, hoãn hoc hien mau', 'Sinh viên tham gia ngày hội hiến máu tình nguyện tổ chức tại trường sẽ được hỗ trợ cấp Giấy chứng nhận hiến máu. Giấy này được dùng làm minh chứng hợp lệ để xin phép nghỉ học có lý do đối với các tiết học diễn ra trong ngày hiến máu đó. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về xuân tình nguyện và về khảo sát ý kiến sinh viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/lich-hoc-trong-tuan'),
+(114, 'Đổi thẻ nhựa sang thẻ sinh viên', 'doi the nhua, lam the sinh vien moi, chip the sinh vien, tich hop the ngan hang', 'Hiện nay UTH triển khai cấp thẻ sinh viên tích hợp thẻ ngân hàng thông minh. Sinh viên năm nhất nhận thẻ theo lịch phân phối của phòng CTSV. Sinh viên khóa cũ có nhu cầu đổi phôi thẻ lỗi sang thẻ đa năng mới đăng ký và đóng phí tại văn phòng phòng CTSV. Ngoài ra, nếu bạn còn thắc mắc về khóa tài khoản Portal hoặc về phạt tiền thư viện, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(115, 'Hủy tư cách đoàn viên', 'xoa ten doan, rut so doan, khong sinh hoat doan, dong doan phi', 'Đoàn viên không tham gia sinh hoạt Đoàn hoặc không đóng đoàn phí liên tục trong 3 tháng mà không có lý do chính đáng sẽ bị xem xét xóa tên khỏi danh sách Đoàn viên và thông báo về Chi đoàn lớp sinh hoạt để trừ điểm rèn luyện theo quy chế. Bên cạnh đó, nếu bạn cũng quan tâm về nghiên cứu khoa học, hay về đồng phục & trang phục, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(116, 'Chính sách hỗ trợ bảo hiểm tai nạn', 'bao hiem tai nan, bhtn, bi tai nan duoc den bao nhieu, ho tro nam vien', 'Ngoài BHYT bắt buộc, nhà trường có liên kết đơn vị bảo hiểm để sinh viên đăng ký tự nguyện Bảo hiểm tai nạn. Khi xảy ra sự cố chấn thương, nằm viện, sinh viên mang Giấy ra viện và hóa đơn chi phí đến Phòng Công tác sinh viên để làm thủ tục nhận tiền bảo hiểm bồi thường. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên và về lệ phí xét tuyển hồ sơ đầu vào — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(117, 'Mượn thiết bị âm thanh, sự kiện', 'muon loa keo, loa mic, thiet bi su kien, loa mic clb, thiet bi doan hoi', 'Các Câu lạc bộ, Chi đoàn lớp cần mượn loa kéo, micro, thiết bị âm thanh hoặc backdrop để tổ chức hoạt động phong trào phải làm đơn đăng ký thông qua Văn phòng Đoàn trường hoặc Phòng Quản trị thiết bị trước ngày diễn ra sự kiện ít nhất 3 ngày. Ngoài ra, nếu bạn còn thắc mắc về mất thẻ sinh viên hoặc về khóa tài khoản Portal, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(118, 'Cấp lại giấy chứng nhận quốc phòng', 'mat bang quan su, mat giay quoc phong, cap lai chung chi gdqp, xin bang diem gdqp', 'Chứng chỉ Giáo dục Quốc phòng - An ninh do Trung tâm GDQP cấp gốc 1 lần duy nhất. Nếu bị mất, sinh viên không được cấp lại bằng gốc mà phải làm đơn xin cấp Giấy xác nhận hoàn thành môn học hoặc bản sao bảng điểm trực tiếp tại Trung tâm quản lý để nộp xét tốt nghiệp. Bên cạnh đó, nếu bạn cũng quan tâm về giáo dục quốc phòng, hay về giáo dục thể chất, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(119, 'Đăng ký tham gia hiến máu đợt hè', 'hien mau mua he, hien mau hk he, lich hien mau thang 6 thang 7', 'Hoạt động hiến máu tình nguyện đợt hè thường được phối hợp tổ chức vào khoảng tháng 6 hoặc tháng 7 nhằm bổ sung nguồn máu dự trữ khan hiếm. Sinh viên học kỳ hè hoặc sinh viên ở lại thành phố đăng ký trực tuyến qua Fanpage Hội Sinh viên trường UTH. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về sinh hoạt công dân và về văn nghệ tiếng hát — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(120, 'Quy định số lần cảnh báo học vụ', 'bi canh bao may lan thi bi duoi, gioi han canh bao, canh bao hoc vu muc do 2', 'Theo quy chế học vụ UTH, sinh viên bị cảnh báo học vụ 2 lần liên tiếp sẽ bị buộc thôi học. Nếu bị cảnh báo rải rác không liên tiếp, sinh viên vẫn được tiếp tục học nhưng phải chủ động gặp Cố vấn học tập để làm cam kết lộ trình cải thiện điểm số. Ngoài ra, nếu bạn còn thắc mắc về điểm rèn luyện f hoặc về bảo lưu kết quả, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(121, 'Thời hạn sử dụng của thẻ thư viện', 'gia han the thu vien, the thu vien het han, khoa the thu vien', 'Thẻ thư viện UTH (tích hợp trên Thẻ sinh viên) có giá trị sử dụng xuyên suốt toàn bộ khóa học chính quy của sinh viên tại trường. Tài khoản thư viện sẽ tự động bị khóa sau khi sinh viên nhận quyết định tốt nghiệp hoặc quyết định thôi học, ngừng học. Bên cạnh đó, nếu bạn cũng quan tâm về phạt tiền thư viện, hay về cấp lại bảng điểm, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(122, 'Thủ tục xin miễn học thể dục', 'mien hoc the duc, khong hoc the duc bi khuyet tat, don mien giao duc the chat, gay chan, chan thuong, tai nan, dau om', 'Sinh viên có khuyết tật, dị tật hoặc mắc các bệnh lý mãn tính không thể tham gia vận động mạnh phải làm đơn xin miễn/giảm học phần Giáo dục thể chất kèm theo Bệnh án, Giấy chứng nhận thương tật của bệnh viện cấp Quận trở lên nộp về Bộ môn GDTC để xét duyệt chuyển đổi môn học phù hợp. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về giáo dục quốc phòng và về cấp lại giấy chứng nhận quốc phòng — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dang-ky-hoc-phan'),
+(123, 'Thời gian nhận bằng tốt nghiệp', 'khi nao nhan bang goc, lay bang tot nghiep o dau, phat bang tot nghiep', 'Bằng tốt nghiệp chính thức được cấp phát cho sinh viên trong vòng 30 ngày kể từ ngày ký Quyết định công nhận tốt nghiệp. Sinh viên nhận bằng trực tiếp tại lễ tốt nghiệp hoặc đến văn phòng Phòng Đào tạo để ký sổ nhận bằng gốc (mang theo CCCD). Ngoài ra, nếu bạn còn thắc mắc về điều kiện tốt nghiệp hoặc về thực tập tốt nghiệp, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(124, 'Phí phạt nợ học phí quá hạn', 'nop tre hoc phi, nop phat hoc phi, tre han dong tien hoc bi phat bao nhieu', 'UTH không áp dụng hình thức phạt tiền mặt khi sinh viên nộp học phí trễ hạn. Tuy nhiên, sinh viên không hoàn thành học phí đúng thời gian quy định sẽ bị hệ thống tự động khóa tài khoản Portal, hủy danh sách đăng ký học phần và cấm tham gia kỳ thi học kỳ. Bên cạnh đó, nếu bạn cũng quan tâm về quy trình vay vốn ngân hàng, hay về bảo hiểm y tế, cứ hỏi mình thêm nha.', '/cong-thanh-toan'),
+(125, 'Xin hoãn đi thực tập tốt nghiệp', 'hoan thuc tap, don xin hoan thuc tap nam cuoi, doi lich di thuc tap', 'Sinh viên năm cuối vì lý do sức khỏe hoặc chưa tích lũy đủ các môn học điều kiện bắt buộc muốn xin hoãn học phần Thực tập tốt nghiệp phải làm đơn xin hoãn nộp về Văn phòng Khoa/Viện chủ quản trước khi danh sách phân công đơn vị thực tập được công bố. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chương trình đào tạo và về thời gian nhận bằng tốt nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(126, 'Chính sách hỗ trợ sinh viên nghèo', 'tro cap kho khan, ho tro sinh vien ngheo đột xuất, tro cap xa hoi', 'Sinh viên gặp tai nạn, thiên tai, hỏa hoạn hoặc gia đình gặp biến cố lớn đột xuất dẫn đến hoàn cảnh đặc biệt khó khăn làm đơn xin hỗ trợ gửi Phòng Công tác sinh viên. Nhà trường sẽ xem xét trích Quỹ hỗ trợ sinh viên để cấp kinh phí trợ cấp đột xuất. Ngoài ra, nếu bạn còn thắc mắc về đóng lệ phí thi lại hoặc về chế độ miễn giảm học phí cho con em diện chính sách, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(127, 'Đồ án tốt nghiệp đạt điểm F xử lý sao', 'rot do an tot nghiep, lam lai khoa luan, rot khoa luan ra truong', 'Sinh viên bảo vệ Đồ án hoặc Khóa luận tốt nghiệp nhận điểm F (không đạt) sẽ không được tốt nghiệp đúng hạn. Sinh viên bắt buộc phải đăng ký làm lại đề tài mới hoặc đăng ký lại học phần đồ án vào kỳ xét duyệt tiếp theo của năm học sau và đóng phí theo quy định. Bên cạnh đó, nếu bạn cũng quan tâm về thời gian nhận bằng tốt nghiệp, hay về chương trình đào tạo, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(128, 'Quy chế xét học bổng khi nợ môn', 'no mon co duoc hoc bong, rot mon co duoc xet hoc bong, thi lai co duoc hoc bong', 'Theo quy chế khen thưởng của UTH, sinh viên chỉ cần nợ 1 môn học (nhận điểm F) hoặc đăng ký thi lại/học lại bất kỳ môn nào trong học kỳ đó thì sẽ lập tức bị tước quyền tham gia xét duyệt Học bổng khuyến khích học tập, bất kể điểm GPA tổng của bạn cao bao nhiêu. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về học bổng doanh nghiệp và về học bổng liên kết — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(129, 'Liên hệ Ban quản lý ký túc xá', 'so dien thoai ban quan ly ktx, gap ai de phan anh ktx, ban quan ly noi tru', 'Để phản ánh các vấn đề về điện nước, an ninh phòng ở hoặc nộp chi phí nội trú Ký túc xá, sinh viên đến trực tiếp văn phòng Ban quản lý nội trú Ký túc xá đặt tại khu vực cổng vào của khu nội trú cơ sở đó để được cán bộ trực ban giải quyết. Ngoài ra, nếu bạn còn thắc mắc về đồng phục & trang phục hoặc về quy định mượn học cụ, thiết bị tại phòng thí nghiệm, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(131, 'Phương thức tuyển sinh năm 2026 của UTH', 'phương thức tuyển sinh 2026, phuong thuc tuyen sinh 2026, uth xet tuyen cach nao, xet hoc ba 2026, diem thi thpt 2026', 'Năm 2026, UTH tuyển sinh đại học chính quy theo 2 phương thức: (1) Xét tuyển thẳng theo quy định của Bộ GD&ĐT và theo Đề án riêng của UTH (thí sinh đạt giải HSG cấp Tỉnh/Thành trở lên; có chứng chỉ tiếng Anh quốc tế từ IELTS 6.0, TOEFL iBT 60, TOEIC 600 hoặc Bậc 4/6 trở lên; học sinh trường chuyên/trọng điểm; đạt học lực Giỏi nhiều học kỳ; thuộc nhóm ngành ưu tiên nhà nước như đường sắt tốc độ cao, CNTT, trí tuệ nhân tạo; hoặc có thư giới thiệu từ doanh nghiệp đối tác của UTH); (2) Xét tuyển kết hợp - phương thức chủ đạo, chiếm phần lớn chỉ tiêu, tính điểm theo công thức riêng của trường (UTH120), kết hợp điểm thi Đánh giá năng lực (nếu có), điểm học bạ cả năm lớp 12, điểm thi tốt nghiệp THPT năm 2026 và điểm ưu tiên/điểm khuyến khích theo quy định. Từ năm 2025, UTH không còn xét tuyển riêng lẻ theo điểm thi THPT hay điểm học bạ như các năm trước đó; các loại điểm này chỉ là thành phần trong công thức xét tuyển kết hợp chung. Chương trình đào tạo được thiết kế 120 tín chỉ, thời gian học tối thiểu 3 năm. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời gian công bố kết quả trúng tuyển chính thức và về đăng ký nguyện vọng vào UTH trên hệ thống của bộ GD&ĐT — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(132, 'Các tổ hợp môn xét tuyển phổ biến tại UTH', 'tổ hợp môn xét tuyển, to hop mon xet tuyen, khoi thi vao uth, khoi a00 a01 d01 d07, uth xet khoi nao', 'Trong công thức xét tuyển kết hợp của UTH, điểm xét tuyển được tính từ 3 môn theo tổ hợp đăng ký (các tổ hợp phổ biến nhiều năm qua gồm A00: Toán - Lý - Hóa; A01: Toán - Lý - Anh; D01: Toán - Văn - Anh; D07: Toán - Hóa - Anh), sau đó tổng hợp cùng điểm học bạ, điểm thi THPT và điểm thi Đánh giá năng lực (nếu có) theo công thức và trọng số riêng của từng năm tuyển sinh. Công nghệ thông tin và Logistics - Quản lý chuỗi cung ứng tiếp tục là các nhóm ngành có chỉ tiêu lớn và mức độ cạnh tranh cao nhất trường. Vì tổ hợp và công thức tính điểm cụ thể có thể thay đổi theo từng ngành và từng năm, thí sinh nên tra cứu Đề án tuyển sinh chính thức hằng năm tại tuyensinh.ut.edu.vn để có thông tin chính xác nhất. Ngoài ra, nếu bạn còn thắc mắc về thủ tục xác nhận nhập học trực tuyến hoặc về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học, mình có thể hỗ trợ giải đáp thêm nhé.', '/chuong-trinh-khung'),
+(133, 'Điểm chuẩn ngành Công nghệ thông tin (CNTT) năm 2025', 'điểm chuẩn cntt 2025, diem chuan cong nghe thong tin 2025, nganh cntt uth bao nhieu diem, diem trung tuyen cntt', 'Năm 2025, UTH xét tuyển theo phương thức Xét tuyển kết hợp với thang điểm riêng của trường (không phải thang 30 quen thuộc, mà dao động 668-999 điểm tùy ngành). Điểm chuẩn trúng tuyển các chuyên ngành thuộc nhóm Công nghệ thông tin, công bố ngày 22/8/2025, như sau: CNTT (chuyên ngành CNTT, chương trình tiên tiến): 800 điểm; CNTT chuyên ngành Khoa học dữ liệu và AI (chương trình tiên tiến): 800 điểm; CNTT chương trình hoàn toàn bằng tiếng Anh: 800 điểm; CNTT chuyên ngành Truyền thông số và Đổi mới sáng tạo: 720 điểm; CNTT chuyên ngành Smart Logistics: 720 điểm; CNTT chuyên ngành Công nghệ ô tô số: 800 điểm. Lưu ý: mức điểm này tính theo công thức riêng của UTH (kết hợp điểm học bạ, điểm thi THPT, điểm Đánh giá năng lực và điểm ưu tiên) nên KHÔNG thể so sánh trực tiếp với điểm chuẩn thang 30 của các trường xét điểm thi THPT truyền thống. Bên cạnh đó, nếu bạn cũng quan tâm về chỉ tiêu tuyển sinh dự kiến năm 2026, hay về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(134, 'Điểm chuẩn ngành Logistics và Quản lý chuỗi cung ứng năm 2025', 'điểm chuẩn logistics 2025, diem chuan logistics 2025, nganh logistics lay bao nhieu diem, diem xet tuyen logistics', 'Logistics và Quản lý chuỗi cung ứng tiếp tục là một trong những ngành có điểm chuẩn cao nhất UTH. Theo điểm chuẩn chính thức công bố ngày 22/8/2025 (phương thức Xét tuyển kết hợp, thang điểm riêng của trường, KHÔNG phải thang 30): Logistics và Quản lý chuỗi cung ứng - chương trình tiên tiến: 963 điểm (chỉ xếp sau ngành Khoa học dữ liệu - chương trình tiên tiến với 999 điểm, cao nhất toàn trường); Logistics và Quản lý chuỗi cung ứng - chương trình hoàn toàn bằng tiếng Anh: 720 điểm. Đây tiếp tục là ngành có mức độ cạnh tranh rất cao tại UTH trong nhiều năm liền. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về rút hồ sơ thôi học và về điểm sàn nhận hồ sơ xét tuyển — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(135, 'Điểm chuẩn tổng hợp tất cả các ngành năm 2025', 'điểm chuẩn 2025, diem chuan 2025, điểm chuẩn tất cả các ngành uth, diem chuan tat ca cac nganh, điểm chuẩn uth 2025 mới nhất, điểm chuẩn năm 2025 bao nhiêu, xet tuyen ket hop 2025, diem chuan hoc ba 2025', 'UTH công bố điểm chuẩn chính thức hệ đại học chính quy năm 2025 vào ngày 22/8/2025, theo phương thức Xét tuyển kết hợp (thang điểm riêng của trường, KHÔNG phải thang 30 truyền thống), dao động từ 668 đến 999 điểm tùy ngành/chuyên ngành. Một số mức điểm chuẩn tiêu biểu: Khoa học dữ liệu (chương trình tiên tiến) 999 điểm - cao nhất toàn trường; Logistics và Quản lý chuỗi cung ứng (chương trình tiên tiến) 963 điểm; Kỹ thuật điện (chuyên ngành Điện công nghiệp, Hệ thống điện giao thông, Năng lượng tái tạo) 936 điểm; Công nghệ kỹ thuật điều khiển và tự động hóa (chương trình tiên tiến) 931 điểm. Nhóm ngành phổ biến ở mức 720-800 điểm gồm: Công nghệ thông tin, Ngôn ngữ Anh, Luật, Quản trị kinh doanh, Hệ thống thông tin quản lý, Kỹ thuật cơ khí, Kỹ thuật ô tô, Kinh tế xây dựng, Khai thác vận tải, Kinh tế vận tải (đa số thuộc chương trình tiên tiến). Nhóm có điểm sàn thấp nhất (668 điểm) gồm các chương trình chuẩn (không phải tiên tiến) như Kỹ thuật tàu thủy, Kỹ thuật xây dựng công trình thủy, Khoa học hàng hải và các ngành liên quan đường sắt tốc độ cao. Lưu ý quan trọng: mức điểm 2025 tính theo công thức riêng của UTH (kết hợp điểm học bạ lớp 12, điểm thi THPT, điểm thi Đánh giá năng lực và điểm ưu tiên), nên KHÔNG thể so sánh trực tiếp với điểm chuẩn thang 30 của các trường xét điểm thi THPT truyền thống. Trường có hơn 50 ngành/chuyên ngành/chương trình đào tạo khác nhau, mỗi ngành có mức điểm riêng; thí sinh nên tra cứu bảng điểm chuẩn đầy đủ theo từng mã ngành tại tuyensinh.ut.edu.vn hoặc liên hệ Phòng Đào tạo để được tư vấn chính xác. Ngoài ra, nếu bạn còn thắc mắc về phương thức tuyển sinh năm 2026 của UTH hoặc về tiếp nhận hồ sơ đăng ký xét tuyển học bạ đợt tiếp theo, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(136, 'Chỉ tiêu tuyển sinh dự kiến năm 2026', 'chỉ tiêu tuyển sinh 2026, chi tieu tuyen sinh 2026, uth tuyen bao nhieu sinh vien, chi tieu nganh cntt 2026', 'UTH công bố Đề án tuyển sinh đại học chính quy năm 2026 vào ngày 16/6/2026, với hơn 50 ngành/chuyên ngành đào tạo, mở rộng thêm nhiều chuyên ngành mới gắn với công nghệ số như: Khoa học dữ liệu - Blockchain và AI, Smart Logistics, Công nghệ ô tô số, Kinh tế số và Trí tuệ nhân tạo, Truyền thông số và Đổi mới sáng tạo, Logistics xanh và phát triển bền vững, Quản lý và công nghệ UAV... Chỉ tiêu cụ thể được phân bổ chi tiết theo từng mã ngành trong Đề án tuyển sinh chính thức chứ không phải một con số tổng cố định, và có thể thay đổi theo từng năm. Thí sinh nên tra cứu chỉ tiêu cụ thể theo từng mã ngành tại Đề án tuyển sinh 2026 chính thức đăng trên tuyensinh.ut.edu.vn thay vì dựa vào số liệu ước tính. Bên cạnh đó, nếu bạn cũng quan tâm về điểm chuẩn ngành công nghệ thông tin, hay về thủ tục xác nhận nhập học trực tuyến, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(137, 'Cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH', 'quy đổi điểm ielts, quy doi diem ielts tuyen sinh, ielts 5.5 duoc may diem, cong diem ielts vao uth', 'UTH không áp dụng một bảng quy đổi điểm IELTS sang thang điểm xét tuyển cố định. Chứng chỉ tiếng Anh quốc tế được UTH sử dụng theo 2 cách: (1) Trong xét tuyển đầu vào: thí sinh có chứng chỉ IELTS từ 6.0 trở lên (hoặc TOEFL iBT từ 60, TOEFL ITP từ 530, TOEIC từ 600, Bậc 4 theo Khung năng lực ngoại ngữ 6 bậc dùng cho Việt Nam trở lên, còn hiệu lực) có thể dùng làm một trong các tiêu chí để đăng ký diện Xét tuyển thẳng theo Đề án riêng của UTH; (2) Sau khi nhập học: sinh viên nộp chứng chỉ IELTS hoặc chứng chỉ ngoại ngữ tương đương để trường xét miễn các cấp độ học phần tiếng Anh tương ứng với năng lực (miễn đến cấp độ nào thì được miễn học phí cấp độ đó), nộp hồ sơ trực tuyến qua support.ut.edu.vn (mục Phòng Đào tạo/Chuẩn đào tạo ngoại ngữ UTH). Vì điều kiện cụ thể có thể điều chỉnh theo từng năm, sinh viên nên tra cứu Đề án tuyển sinh hoặc thông báo chính thức mới nhất của UTH. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về điểm chuẩn ngành logistics và quản lý chuỗi cung ứng năm 2025 và về điểm sàn nhận hồ sơ xét tuyển — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(138, 'Điểm sàn nhận hồ sơ xét tuyển (Ngưỡng đảm bảo chất lượng)', 'điểm sàn uth, diem san nhan ho so, bao nhieu diem thi duoc nop don, diem san 2025 2026', 'Từ năm 2025, UTH chuyển sang phương thức Xét tuyển kết hợp làm phương thức tuyển sinh chủ đạo (tính điểm theo công thức riêng của trường, kết hợp điểm học bạ, điểm thi THPT và điểm thi Đánh giá năng lực), nên khái niệm "điểm sàn" theo thang 30 truyền thống không còn áp dụng thống nhất cho toàn trường như các năm trước 2025. Điều kiện đầu vào tối thiểu của phương thức xét tuyển kết hợp hiện nay là thí sinh phải có điểm thi môn Toán trong kỳ thi tốt nghiệp THPT từ 5.0 trở lên (một số ngành yêu cầu cao hơn, ví dụ ngành Toán ứng dụng yêu cầu từ 6.0), cùng với ngưỡng đảm bảo chất lượng cụ thể theo từng ngành được quy định riêng trong Đề án tuyển sinh của từng năm. Thí sinh cần tra cứu Đề án tuyển sinh chính thức mới nhất tại tuyensinh.ut.edu.vn để biết điều kiện đăng ký xét tuyển áp dụng cho ngành mình quan tâm. Ngoài ra, nếu bạn còn thắc mắc về đăng ký nguyện vọng vào UTH trên hệ thống của bộ GD&ĐT hoặc về lệ phí xét tuyển hồ sơ đầu vào, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(139, 'Đăng ký nguyện vọng vào UTH trên hệ thống của Bộ GD&ĐT', 'đăng ký nguyện vọng, dang ky nguyen vong, ma truong uth la gi, xep nguyen vong vao uth', 'Để xét tuyển vào UTH bằng điểm thi THPT, thí sinh phải đăng ký nguyện vọng trên hệ thống chung của Bộ GD&ĐT theo đúng lịch quy định. Thí sinh cần nhập chính xác Mã trường của UTH là GTS và chọn đúng mã ngành, mã tổ hợp môn mong muốn. Nên xếp ngành yêu thích nhất ở Nguyện vọng 1. Bên cạnh đó, nếu bạn cũng quan tâm về điểm chuẩn ngành logistics và quản lý chuỗi cung ứng năm 2025, hay về lệ phí xét tuyển hồ sơ đầu vào, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(140, 'Lệ phí xét tuyển hồ sơ đầu vào', 'lệ phí xét tuyển, le phi xet tuyen, nop tien xet hoc ba bao nhieu, dong tien nguyen vong', 'Lệ phí xét tuyển đối với phương thức xét học bạ nộp trực tiếp về trường UTH áp dụng theo quy định hành chính thu chi. Đối với phương thức xét điểm thi THPT, thí sinh đóng lệ phí trực tuyến trực tiếp trên hệ thống cổng thông tin của Bộ GD&ĐT khi tiến hành xác nhận số lượng nguyện vọng. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về học phí trường và về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/cong-thanh-toan'),
+(141, 'Thời gian công bố kết quả trúng tuyển chính thức', 'khi nào biết kết quả trúng tuyển, khi nao biet ket qua trung tuyen, lich cong bo diem chuan uth', 'Thời gian công bố điểm chuẩn và danh sách trúng tuyển chính thức của UTH tuân thủ nghiêm ngặt theo lộ trình chung của Bộ GD&ĐT (thường vào khoảng tháng 8 hằng năm). Kết quả xét tuyển sớm bằng học bạ thường được trường thông báo trước đó vào tháng 6 hoặc tháng 7. Ngoài ra, nếu bạn còn thắc mắc về điểm chuẩn ngành logistics và quản lý chuỗi cung ứng năm 2025 hoặc về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(142, 'Thủ tục xác nhận nhập học trực tuyến', 'xác nhận nhập học, xac nhan nhap hoc online, huong dan nhap hoc uth, khong xac nhan nhap hoc bi gi', 'Sau khi có thông báo trúng tuyển chính thức, thí sinh bắt buộc phải thực hiện bước Xác nhận nhập học trực tuyến trên hệ thống của Bộ GD&ĐT trước thời hạn quy định. Thí sinh cố tình không xác nhận nhập học đúng hạn sẽ bị hệ thống tự động hủy kết quả trúng tuyển vào trường. Bên cạnh đó, nếu bạn cũng quan tâm về các tổ hợp môn xét tuyển phổ biến tại UTH, hay về phương thức tuyển sinh năm 2026 của UTH, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(143, 'Hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học', 'hồ sơ nhập học cần gì, ho so nhap hoc can gi, mang theo gi khi nhap hoc uth, giay to nhap hoc', 'Hồ sơ nhập học bản giấy nộp tại trường bao gồm: Giấy báo trúng tuyển bản gốc; Học bạ THPT (bản sao công chứng); Giấy chứng nhận tốt nghiệp tạm thời hoặc Bằng tốt nghiệp THPT; Bản sao CCCD; Giấy khai sinh; và các giấy tờ minh chứng đối tượng ưu tiên chính sách (nếu có). Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về quy trình làm thủ tục nhập học trực tiếp tại trường và về rút hồ sơ thôi học — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(144, 'Quy trình làm thủ tục nhập học trực tiếp tại trường', 'quy trình nhập học trực tiếp, quy trinh nhap hoc truc tiep, den truong nhap hoc o dau, huong dan tan sinh vien', 'Khi đến nhập học trực tiếp tại cơ sở chính của UTH, tân sinh viên thực hiện theo quy trình luồng: - Tra cứu số thứ tự và phòng làm thủ tục tại sảnh hướng dẫn. - Nộp hồ sơ bản giấy tại bàn tiếp nhận của Khoa/Viện. - Đóng học phí và các khoản bảo hiểm bắt buộc tại bàn tài chính. - Nhận lịch học Tuần sinh hoạt công dân và chụp ảnh làm Thẻ sinh viên. Ngoài ra, nếu bạn còn thắc mắc về thời gian nhận bằng tốt nghiệp hoặc về điều kiện tốt nghiệp, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(145, 'Chính sách rút hồ sơ hoàn học phí đối với tân sinh viên', 'rút học phí nhập học, rut hoc phi nhap hoc, nhap hoc roi xin rut lai tien, thoi hoc rut lai hoc phi', 'Tân sinh viên đã làm thủ tục nhập học nhưng vì lý do cá nhân muốn xin rút hồ sơ không theo học nữa sẽ được xem xét hoàn trả học phí tùy theo thời điểm nộp đơn. Nếu nộp đơn rút trước ngày khai giảng chính thức, sinh viên được hoàn lại một phần học phí theo quy định đóng rút bồi hoàn của nhà trường; sau ngày khai giảng sẽ không được hoàn phí. Bên cạnh đó, nếu bạn cũng quan tâm về chính sách hỗ trợ sinh viên nghèo, hay về quy trình vay vốn ngân hàng, cứ hỏi mình thêm nha.', '/cong-thanh-toan');
+
+-- Import the legacy FAQ into the normalized knowledge base.
+-- All records remain pending until an administrator verifies source + validity.
+INSERT INTO knowledge_sources (
+    source_type, title, organization, is_official, status
+) VALUES (
+    'faq', 'Legacy enriched FAQ import 2026-07-10', 'UTH Chatbot project', FALSE, 'active'
+);
+SET @legacy_source_id = LAST_INSERT_ID();
+
+INSERT INTO knowledge_articles (
+    source_id, title, category, keywords, answer_content, route_url,
+    audience, verification_status, confidence_level, priority, language_code
+)
+SELECT
+    @legacy_source_id,
+    CONCAT('FAQ #', f.id, ' - ', COALESCE(f.topic_group, 'Chưa phân loại')),
+    COALESCE(NULLIF(TRIM(f.topic_group), ''), 'Chưa phân loại'),
+    f.tu_khoa,
+    f.noi_dung,
+    f.link_dieu_huong,
+    'all',
+    f.verification_status,
+    'low',
+    5,
+    'vi'
+FROM faq f;
+
+INSERT INTO knowledge_question_examples (article_id, example_question)
+SELECT ka.id, LEFT(f.tu_khoa, 1000)
+FROM faq f
+JOIN knowledge_articles ka
+  ON ka.source_id = @legacy_source_id
+ AND ka.title = CONCAT('FAQ #', f.id, ' - ', COALESCE(f.topic_group, 'Chưa phân loại'));
+
+-- One initial chunk per legacy FAQ. The ingestion agent can later re-chunk long content.
+INSERT INTO knowledge_chunks (article_id, chunk_index, heading, chunk_text, token_count)
+SELECT ka.id, 0, ka.title, ka.answer_content,
+       CEIL(CHAR_LENGTH(ka.answer_content) / 4)
+FROM knowledge_articles ka
+WHERE ka.source_id = @legacy_source_id;
+
+-- --------------------------------------------------------------------------
+-- 10. SEED REFERENCE DATA
+-- --------------------------------------------------------------------------
+INSERT INTO roles (code, name, description) VALUES
+('student', 'Sinh viên', 'Người dùng sinh viên'),
+('admin', 'Quản trị viên', 'Quản trị toàn hệ thống'),
+('staff', 'Nhân viên', 'Nhân viên phòng ban hỗ trợ'),
+('knowledge_reviewer', 'Kiểm duyệt kiến thức', 'Xác minh nguồn và nội dung RAG');
+
+INSERT INTO search_synonyms (canonical_term, synonym_term, category) VALUES
+('đăng ký học phần', 'đăng ký môn', 'hoc_vu'),
+('đăng ký học phần', 'dkhp', 'hoc_vu'),
+('mã số sinh viên', 'mssv', 'sinh_vien'),
+('học phí', 'công nợ', 'hoc_phi'),
+('thời khóa biểu', 'tkb', 'lich_hoc'),
+('điểm trung bình tích lũy', 'gpa', 'diem'),
+('phúc khảo', 'xem lại điểm', 'thi_cu'),
+('bảo lưu', 'tạm dừng học', 'hoc_vu');
+
+INSERT INTO system_settings (setting_key, setting_value, description, is_public) VALUES
+('rag.min_final_score', JSON_OBJECT('value', 0.62), 'Ngưỡng tối thiểu để dùng context RAG', FALSE),
+('rag.max_context_chunks', JSON_OBJECT('value', 5), 'Số chunk tối đa gửi tới Gemini', FALSE),
+('rag.require_verified', JSON_OBJECT('value', true), 'Chỉ dùng kiến thức đã kiểm duyệt', FALSE),
+('chatbot.fallback_message', JSON_OBJECT('vi', 'Mình chưa tìm thấy thông tin đủ chính xác trong hệ thống. Bạn có thể cung cấp thêm học kỳ, năm học hoặc tạo ticket hỗ trợ.'), 'Câu trả lời khi thiếu context', TRUE),
+('security.max_login_attempts', JSON_OBJECT('value', 5), 'Số lần đăng nhập sai trước khi khóa tạm thời', FALSE);
+
+-- --------------------------------------------------------------------------
+-- 11. COMPATIBILITY VIEWS FOR OLD PHP CODE
+-- --------------------------------------------------------------------------
+CREATE OR REPLACE VIEW system_notifications AS
+SELECT
+    id,
+    title,
+    content,
+    CASE WHEN announcement_type = 'event' THEN 'event' ELSE 'news' END AS type,
+    COALESCE(published_at, created_at) AS created_at
+FROM announcements
+WHERE status = 'published'
+  AND (expires_at IS NULL OR expires_at >= NOW());
+
+CREATE OR REPLACE VIEW class_schedules AS
+SELECT
+    css.id,
+    sp.student_code AS mssv,
+    s.name AS subject_name,
+    COALESCE(css.room, '') AS room,
+    css.day_of_week,
+    css.start_time,
+    css.end_time
+FROM class_schedule_sessions css
+JOIN course_sections cs ON cs.id = css.course_section_id
+JOIN subjects s ON s.id = cs.subject_id
+JOIN enrollments e ON e.course_section_id = cs.id
+JOIN student_profiles sp ON sp.id = e.student_id
+WHERE e.enrollment_status IN ('registered','studying');
+
+-- --------------------------------------------------------------------------
+-- 12. SAFE RAG VIEW: API SHOULD QUERY THIS VIEW, NOT THE RAW FAQ TABLE
+-- --------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_active_verified_knowledge AS
+SELECT
+    ka.id,
+    ka.title,
+    ka.category,
+    ka.subcategory,
+    ka.intent_code,
+    ka.keywords,
+    ka.answer_content,
+    ka.route_url,
+    ka.priority,
+    ka.confidence_level,
+    ks.title AS source_title,
+    ks.source_url,
+    ks.document_number,
+    ks.issued_date
+FROM knowledge_articles ka
+LEFT JOIN knowledge_sources ks ON ks.id = ka.source_id
+WHERE ka.verification_status = 'verified'
+  AND ka.deleted_at IS NULL
+  AND (ka.valid_from IS NULL OR ka.valid_from <= NOW())
+  AND (ka.valid_until IS NULL OR ka.valid_until >= NOW())
+  AND (ks.id IS NULL OR ks.status = 'active');
+
+-- Helpful dashboard views.
+CREATE OR REPLACE VIEW v_unpaid_tuition AS
+SELECT
+    ti.id,
+    sp.student_code,
+    u.full_name,
+    ay.code AS academic_year,
+    sem.name AS semester,
+    ti.invoice_number,
+    ti.subtotal,
+    ti.discount_amount,
+    ti.paid_amount,
+    ti.outstanding_amount,
+    ti.due_date,
+    ti.status
+FROM tuition_invoices ti
+JOIN student_profiles sp ON sp.id = ti.student_id
+JOIN users u ON u.id = sp.user_id
+JOIN semesters sem ON sem.id = ti.semester_id
+JOIN academic_years ay ON ay.id = sem.academic_year_id
+WHERE ti.status IN ('unpaid','partially_paid','overdue');
+
+CREATE OR REPLACE VIEW v_chat_quality_summary AS
+SELECT
+    DATE(cm.created_at) AS report_date,
+    COUNT(*) AS assistant_messages,
+    SUM(cm.answer_status = 'insufficient_context') AS insufficient_context_count,
+    AVG(cm.confidence_score) AS average_confidence,
+    SUM(cf.rating = 'up') AS thumbs_up,
+    SUM(cf.rating = 'down') AS thumbs_down
+FROM chat_messages cm
+LEFT JOIN chat_feedback cf ON cf.message_id = cm.id
+WHERE cm.sender_type = 'assistant'
+GROUP BY DATE(cm.created_at);
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- End of UTH Chatbot Portal Database v2.0.0
+
+
+-- --- START OF FILE: database/do_an_udpm_demo_seed.sql --- 
+
+-- ============================================================================
+-- UTH CHATBOT PORTAL - DEMO DATA SEED
+-- Target database: do_an_udpm
+-- Safe to run more than once. Existing passwords are preserved unless they are
+-- empty/dummy values.
+-- ============================================================================
+
+SET NAMES utf8mb4;
+SET time_zone = '+07:00';
+USE `do_an_udpm`;
+
+-- Roles and settings ---------------------------------------------------------
+INSERT INTO roles (code, name, description) VALUES
+('student', 'Sinh viên', 'Người dùng sinh viên'),
+('admin', 'Quản trị viên', 'Quản trị toàn hệ thống'),
+('staff', 'Nhân viên', 'Nhân viên phòng ban hỗ trợ'),
+('knowledge_reviewer', 'Kiểm duyệt kiến thức', 'Xác minh nguồn và nội dung RAG')
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    description = VALUES(description);
+
+INSERT INTO system_settings (setting_key, setting_value, description, is_public) VALUES
+('rag.min_final_score', JSON_OBJECT('value', 0.62), 'Ngưỡng tối thiểu để dùng context RAG', FALSE),
+('rag.max_context_chunks', JSON_OBJECT('value', 5), 'Số chunk tối đa gửi tới Gemini', FALSE),
+('rag.require_verified', JSON_OBJECT('value', true), 'Chỉ dùng kiến thức đã kiểm duyệt', FALSE),
+('chatbot.fallback_message', JSON_OBJECT('vi', 'Mình chưa tìm thấy thông tin đủ chính xác trong hệ thống. Bạn có thể cung cấp thêm học kỳ, năm học hoặc tạo ticket hỗ trợ.'), 'Câu trả lời khi thiếu context', TRUE)
+ON DUPLICATE KEY UPDATE
+    setting_value = VALUES(setting_value),
+    description = VALUES(description),
+    is_public = VALUES(is_public);
+
+-- Organization and student profile -----------------------------------------
+INSERT INTO faculties (code, name, office_location, email, phone, status) VALUES
+('FIT', 'Khoa Công nghệ thông tin', 'Khu nhà C - Cơ sở chính', 'fit@ut.edu.vn', '028 3899 2862', 'active')
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    office_location = VALUES(office_location),
+    email = VALUES(email),
+    phone = VALUES(phone),
+    status = VALUES(status);
+
+SET @faculty_id = (SELECT id FROM faculties WHERE code = 'FIT' LIMIT 1);
+
+INSERT INTO programs (
+    faculty_id, code, name, degree_level, education_type, specialization,
+    total_credits, standard_duration_semesters, status
+) VALUES (
+    @faculty_id, 'CNTT-CLC-2023', 'Công nghệ thông tin', 'bachelor',
+    'Chất lượng cao', 'Công nghệ thông tin', 120, 8, 'active'
+)
+ON DUPLICATE KEY UPDATE
+    faculty_id = VALUES(faculty_id),
+    name = VALUES(name),
+    degree_level = VALUES(degree_level),
+    education_type = VALUES(education_type),
+    specialization = VALUES(specialization),
+    total_credits = VALUES(total_credits),
+    standard_duration_semesters = VALUES(standard_duration_semesters),
+    status = VALUES(status);
+
+SET @program_id = (SELECT id FROM programs WHERE code = 'CNTT-CLC-2023' LIMIT 1);
+SET @admin_role_id = (SELECT id FROM roles WHERE code = 'admin' LIMIT 1);
+SET @student_role_id = (SELECT id FROM roles WHERE code = 'student' LIMIT 1);
+
+-- Default fresh-import credentials:
+--   admin / admin123
+--   075205019210 / sv123
+INSERT INTO users (username, email, password_hash, role_id, full_name, status, created_at, updated_at)
+VALUES (
+    'admin',
+    'admin@ut.edu.vn',
+    '$2y$12$3M7KKuHVwqedzfDCECxT0e1SkMFE7YW3JVH4Ylr5x5zMfCiiP1d0K',
+    @admin_role_id,
+    'Ban Quản trị UTH',
+    'active',
+    NOW(),
+    NOW()
+)
+ON DUPLICATE KEY UPDATE
+    role_id = VALUES(role_id),
+    full_name = VALUES(full_name),
+    status = VALUES(status),
+    password_hash = IF(users.password_hash IN ('', 'password_hash_dummy'), VALUES(password_hash), users.password_hash),
+    updated_at = NOW();
+
+INSERT INTO users (username, email, password_hash, role_id, full_name, status, created_at, updated_at)
+VALUES (
+    '075205019210',
+    '075205019210@student.ut.edu.vn',
+    '$2y$12$piGoVROmAihFzRzx3BQ9.uKIgo.bIGfYmrYdPYTYWrV5a0GN/EZSu',
+    @student_role_id,
+    'Phạm Anh Tuấn',
+    'active',
+    NOW(),
+    NOW()
+)
+ON DUPLICATE KEY UPDATE
+    role_id = VALUES(role_id),
+    full_name = VALUES(full_name),
+    status = VALUES(status),
+    password_hash = IF(users.password_hash IN ('', 'password_hash_dummy'), VALUES(password_hash), users.password_hash),
+    updated_at = NOW();
+
+SET @student_user_id = (SELECT id FROM users WHERE username = '075205019210' LIMIT 1);
+
+INSERT INTO student_profiles (
+    user_id, student_code, program_id, cohort_year, class_code, date_of_birth,
+    gender, place_of_birth, enrollment_date, expected_graduation_date,
+    academic_status, advisor_name, created_at, updated_at
+) VALUES (
+    @student_user_id, '075205019210', @program_id, 2023, 'CNTT2023',
+    '2005-06-07', 'male', 'Đồng Tháp', '2023-09-05',
+    '2027-08-31', 'studying', 'ThS. Nguyễn Minh Khoa', NOW(), NOW()
+)
+ON DUPLICATE KEY UPDATE
+    program_id = VALUES(program_id),
+    cohort_year = VALUES(cohort_year),
+    class_code = VALUES(class_code),
+    date_of_birth = VALUES(date_of_birth),
+    gender = VALUES(gender),
+    place_of_birth = VALUES(place_of_birth),
+    enrollment_date = VALUES(enrollment_date),
+    expected_graduation_date = VALUES(expected_graduation_date),
+    academic_status = VALUES(academic_status),
+    advisor_name = VALUES(advisor_name),
+    updated_at = NOW();
+
+SET @student_id = (SELECT id FROM student_profiles WHERE student_code = '075205019210' LIMIT 1);
+
+-- Academic year, semester, subjects -----------------------------------------
+INSERT INTO academic_years (code, start_date, end_date, is_current) VALUES
+('2025-2026', '2025-08-01', '2026-07-31', TRUE)
+ON DUPLICATE KEY UPDATE
+    start_date = VALUES(start_date),
+    end_date = VALUES(end_date),
+    is_current = VALUES(is_current);
+
+SET @academic_year_id = (SELECT id FROM academic_years WHERE code = '2025-2026' LIMIT 1);
+
+INSERT INTO semesters (
+    academic_year_id, code, name, semester_number, start_date, end_date,
+    registration_start, registration_end, tuition_due_date, is_current
+) VALUES (
+    @academic_year_id, 'HK_HE_2026', 'Học kỳ hè năm học 2025-2026',
+    3, '2026-06-01', '2026-07-31', '2026-06-01 08:00:00',
+    '2026-06-15 17:00:00', '2026-07-20 17:00:00', TRUE
+)
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    semester_number = VALUES(semester_number),
+    start_date = VALUES(start_date),
+    end_date = VALUES(end_date),
+    registration_start = VALUES(registration_start),
+    registration_end = VALUES(registration_end),
+    tuition_due_date = VALUES(tuition_due_date),
+    is_current = VALUES(is_current);
+
+SET @semester_id = (
+    SELECT id
+    FROM semesters
+    WHERE academic_year_id = @academic_year_id AND code = 'HK_HE_2026'
+    LIMIT 1
+);
+
+INSERT INTO subjects (code, name, credits, theory_periods, practice_periods, faculty_id, description, status) VALUES
+('MOB101', 'Lập trình thiết bị di động', 3, 30, 30, @faculty_id, 'Xây dựng ứng dụng di động cơ bản và tích hợp API.', 'active'),
+('ECOM201', 'Thương mại điện tử', 3, 30, 15, @faculty_id, 'Nền tảng thương mại điện tử và vận hành kênh bán hàng số.', 'active'),
+('NET301', 'Lập trình mạng', 3, 30, 30, @faculty_id, 'Socket, giao thức mạng và ứng dụng client-server.', 'active'),
+('POL101', 'Lịch sử Đảng Cộng sản Việt Nam', 2, 30, 0, @faculty_id, 'Kiến thức nền tảng về lịch sử Đảng Cộng sản Việt Nam.', 'active'),
+('DST401', 'Lập trình phân tán', 3, 30, 30, @faculty_id, 'Kiến trúc phân tán, RPC, message queue và dịch vụ web.', 'active'),
+('PM401', 'Quản trị dự án phần mềm', 3, 30, 15, @faculty_id, 'Lập kế hoạch, quản lý rủi ro và theo dõi tiến độ dự án phần mềm.', 'active')
+ON DUPLICATE KEY UPDATE
+    name = VALUES(name),
+    credits = VALUES(credits),
+    theory_periods = VALUES(theory_periods),
+    practice_periods = VALUES(practice_periods),
+    faculty_id = VALUES(faculty_id),
+    description = VALUES(description),
+    status = VALUES(status);
+
+-- Course sections and weekly schedule ---------------------------------------
+INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+SELECT @semester_id, id, 'MOB101-01', 'ThS. Nguyễn Văn A', 45, 36, 'offline', 'open'
+FROM subjects WHERE code = 'MOB101'
+ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), lecturer_name = VALUES(lecturer_name), registered_count = VALUES(registered_count), status = VALUES(status);
+
+INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+SELECT @semester_id, id, 'ECOM201-01', 'ThS. Trần Thị B', 45, 34, 'hybrid', 'open'
+FROM subjects WHERE code = 'ECOM201'
+ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), lecturer_name = VALUES(lecturer_name), registered_count = VALUES(registered_count), delivery_mode = VALUES(delivery_mode), status = VALUES(status);
+
+INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+SELECT @semester_id, id, 'NET301-01', 'ThS. Lê Văn C', 45, 38, 'offline', 'open'
+FROM subjects WHERE code = 'NET301'
+ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), lecturer_name = VALUES(lecturer_name), registered_count = VALUES(registered_count), status = VALUES(status);
+
+INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+SELECT @semester_id, id, 'POL101-01', 'TS. Phạm Thị D', 80, 72, 'offline', 'open'
+FROM subjects WHERE code = 'POL101'
+ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), lecturer_name = VALUES(lecturer_name), registered_count = VALUES(registered_count), status = VALUES(status);
+
+INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+SELECT @semester_id, id, 'DST401-01', 'ThS. Hoàng Minh E', 40, 31, 'offline', 'open'
+FROM subjects WHERE code = 'DST401'
+ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), lecturer_name = VALUES(lecturer_name), registered_count = VALUES(registered_count), status = VALUES(status);
+
+INSERT INTO course_sections (semester_id, subject_id, section_code, lecturer_name, capacity, registered_count, delivery_mode, status)
+SELECT @semester_id, id, 'PM401-01', 'ThS. Võ Thanh F', 50, 41, 'online', 'open'
+FROM subjects WHERE code = 'PM401'
+ON DUPLICATE KEY UPDATE subject_id = VALUES(subject_id), lecturer_name = VALUES(lecturer_name), registered_count = VALUES(registered_count), delivery_mode = VALUES(delivery_mode), status = VALUES(status);
+
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+SELECT cs.id, 1, '07:30:00', '10:00:00', 'Phòng F101', 'Cơ sở chính', '2026-06-01', '2026-07-31'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'MOB101-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM class_schedule_sessions css
+      WHERE css.course_section_id = cs.id AND css.day_of_week = 1 AND css.start_time = '07:30:00'
+  );
+
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+SELECT cs.id, 1, '13:00:00', '15:30:00', 'Phòng B202', 'Cơ sở chính', '2026-06-01', '2026-07-31'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'ECOM201-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM class_schedule_sessions css
+      WHERE css.course_section_id = cs.id AND css.day_of_week = 1 AND css.start_time = '13:00:00'
+  );
+
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+SELECT cs.id, 2, '07:30:00', '10:00:00', 'Phòng D103', 'Cơ sở chính', '2026-06-01', '2026-07-31'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'NET301-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM class_schedule_sessions css
+      WHERE css.course_section_id = cs.id AND css.day_of_week = 2 AND css.start_time = '07:30:00'
+  );
+
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+SELECT cs.id, 3, '07:30:00', '11:00:00', 'Hội trường A', 'Cơ sở chính', '2026-06-01', '2026-07-31'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'POL101-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM class_schedule_sessions css
+      WHERE css.course_section_id = cs.id AND css.day_of_week = 3 AND css.start_time = '07:30:00'
+  );
+
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+SELECT cs.id, 4, '13:00:00', '15:30:00', 'Phòng F304', 'Cơ sở chính', '2026-06-01', '2026-07-31'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'DST401-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM class_schedule_sessions css
+      WHERE css.course_section_id = cs.id AND css.day_of_week = 4 AND css.start_time = '13:00:00'
+  );
+
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus, valid_from, valid_until)
+SELECT cs.id, 5, '07:30:00', '10:00:00', 'Phòng D201', 'Cơ sở chính', '2026-06-01', '2026-07-31'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'PM401-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM class_schedule_sessions css
+      WHERE css.course_section_id = cs.id AND css.day_of_week = 5 AND css.start_time = '07:30:00'
+  );
+
+INSERT INTO enrollments (student_id, course_section_id, enrollment_status, registered_at)
+SELECT @student_id, cs.id, 'studying', '2026-06-01 09:00:00'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id
+  AND cs.section_code IN ('MOB101-01', 'ECOM201-01', 'NET301-01', 'POL101-01', 'DST401-01', 'PM401-01')
+ON DUPLICATE KEY UPDATE
+    enrollment_status = VALUES(enrollment_status);
+
+-- Grades, exams, tuition -----------------------------------------------------
+INSERT INTO grades (enrollment_id, attendance_score, process_score, midterm_score, final_exam_score, final_score_10, grade_4, letter_grade, result, published_at)
+SELECT e.id, 9.0, 8.5, 8.0, 8.2, 8.3, 3.50, 'B+', 'passed', '2026-07-08 09:00:00'
+FROM enrollments e JOIN course_sections cs ON cs.id = e.course_section_id
+WHERE e.student_id = @student_id AND cs.section_code = 'MOB101-01'
+ON DUPLICATE KEY UPDATE final_score_10 = VALUES(final_score_10), grade_4 = VALUES(grade_4), letter_grade = VALUES(letter_grade), result = VALUES(result), published_at = VALUES(published_at);
+
+INSERT INTO grades (enrollment_id, attendance_score, process_score, midterm_score, final_exam_score, final_score_10, grade_4, letter_grade, result, published_at)
+SELECT e.id, 8.5, 8.0, 7.5, 7.8, 7.9, 3.00, 'B', 'passed', '2026-07-08 09:00:00'
+FROM enrollments e JOIN course_sections cs ON cs.id = e.course_section_id
+WHERE e.student_id = @student_id AND cs.section_code = 'ECOM201-01'
+ON DUPLICATE KEY UPDATE final_score_10 = VALUES(final_score_10), grade_4 = VALUES(grade_4), letter_grade = VALUES(letter_grade), result = VALUES(result), published_at = VALUES(published_at);
+
+INSERT INTO grades (enrollment_id, attendance_score, process_score, midterm_score, final_exam_score, final_score_10, grade_4, letter_grade, result, published_at)
+SELECT e.id, 8.0, 7.5, 7.0, NULL, NULL, NULL, NULL, 'pending', NULL
+FROM enrollments e JOIN course_sections cs ON cs.id = e.course_section_id
+WHERE e.student_id = @student_id AND cs.section_code = 'NET301-01'
+ON DUPLICATE KEY UPDATE attendance_score = VALUES(attendance_score), process_score = VALUES(process_score), midterm_score = VALUES(midterm_score), result = VALUES(result), published_at = VALUES(published_at);
+
+INSERT INTO exam_schedules (course_section_id, exam_type, exam_date, start_time, duration_minutes, room, campus, seat_number, notes, published_at)
+SELECT cs.id, 'final', '2026-07-24', '07:30:00', 90, 'Phòng C305', 'Cơ sở chính', 'A12', 'Mang theo thẻ sinh viên khi dự thi.', '2026-07-08 08:00:00'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'MOB101-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM exam_schedules es
+      WHERE es.course_section_id = cs.id AND es.exam_type = 'final' AND es.exam_date = '2026-07-24'
+  );
+
+INSERT INTO exam_schedules (course_section_id, exam_type, exam_date, start_time, duration_minutes, room, campus, seat_number, notes, published_at)
+SELECT cs.id, 'final', '2026-07-28', '13:30:00', 90, 'Phòng D204', 'Cơ sở chính', 'B08', 'Có mặt trước giờ thi 15 phút.', '2026-07-08 08:00:00'
+FROM course_sections cs
+WHERE cs.semester_id = @semester_id AND cs.section_code = 'NET301-01'
+  AND NOT EXISTS (
+      SELECT 1 FROM exam_schedules es
+      WHERE es.course_section_id = cs.id AND es.exam_type = 'final' AND es.exam_date = '2026-07-28'
+  );
+
+INSERT INTO tuition_invoices (
+    student_id, semester_id, invoice_number, description, subtotal,
+    discount_amount, paid_amount, due_date, status, issued_at
+) VALUES (
+    @student_id, @semester_id, 'HP-075205019210-HE2026',
+    'Học phí học kỳ hè năm học 2025-2026', 17640000,
+    0, 8000000, '2026-07-20 17:00:00', 'partially_paid', '2026-06-20 08:30:00'
+)
+ON DUPLICATE KEY UPDATE
+    description = VALUES(description),
+    subtotal = VALUES(subtotal),
+    discount_amount = VALUES(discount_amount),
+    paid_amount = VALUES(paid_amount),
+    due_date = VALUES(due_date),
+    status = VALUES(status);
+
+SET @invoice_id = (SELECT id FROM tuition_invoices WHERE invoice_number = 'HP-075205019210-HE2026' LIMIT 1);
+
+DELETE FROM tuition_invoice_items WHERE invoice_id = @invoice_id;
+
+INSERT INTO tuition_invoice_items (invoice_id, item_type, description, quantity, unit_price) VALUES
+(@invoice_id, 'tuition_credit', '18 tín chỉ chương trình chất lượng cao', 18, 980000),
+(@invoice_id, 'service', 'Phí dịch vụ sinh viên học kỳ hè', 1, 0);
+
+-- Announcements and deadlines ------------------------------------------------
+INSERT INTO announcements (title, slug, summary, content, announcement_type, source_url, published_by, published_at, expires_at, status) VALUES
+('Thông báo điều chỉnh đăng ký học phần học kỳ hè 2025-2026', 'thong-bao-dieu-chinh-dkhp-he-2026', 'Sinh viên được điều chỉnh đăng ký học phần học kỳ hè đến 17:00 ngày 12/07/2026.', 'Sinh viên đăng nhập Portal để kiểm tra lớp học phần, học phí tạm tính và thực hiện điều chỉnh trong thời gian quy định.', 'academic', 'https://portal.ut.edu.vn/thong-bao/dieu-chinh-dkhp-he-2026', (SELECT id FROM users WHERE username = 'admin' LIMIT 1), '2026-07-01 08:00:00', '2026-07-31 23:59:59', 'published'),
+('Sự kiện Ngày hội việc làm UTH 2026', 'su-kien-ngay-hoi-viec-lam-uth-2026', 'Ngày hội việc làm diễn ra tại cơ sở chính, sinh viên đăng ký tham dự trên Portal.', 'Chương trình có các doanh nghiệp trong lĩnh vực công nghệ, logistics và giao thông vận tải tham gia tuyển dụng thực tập sinh.', 'event', 'https://portal.ut.edu.vn/su-kien/ngay-hoi-viec-lam-2026', (SELECT id FROM users WHERE username = 'admin' LIMIT 1), '2026-07-05 09:00:00', '2026-07-16 23:59:59', 'published'),
+('Thông báo công bố lịch thi học kỳ hè 2025-2026', 'thong-bao-lich-thi-he-2026', 'Lịch thi dự kiến đã được cập nhật, sinh viên kiểm tra phòng thi và ca thi trong Portal.', 'Sinh viên phản hồi trùng lịch thi hoặc sai thông tin lớp học phần qua mục hỗ trợ trực tuyến trước ngày 18/07/2026.', 'exam', 'https://portal.ut.edu.vn/thong-bao/lich-thi-he-2026', (SELECT id FROM users WHERE username = 'admin' LIMIT 1), '2026-07-08 10:00:00', '2026-07-31 23:59:59', 'published'),
+('Thông báo bảo trì Portal sinh viên', 'bao-tri-portal-sinh-vien-07-2026', 'Portal tạm ngưng một số chức năng thanh toán trong khung giờ bảo trì.', 'Hệ thống thanh toán và xác nhận học phí tạm ngưng từ 22:00 ngày 18/07/2026 đến 02:00 ngày 19/07/2026.', 'other', 'https://portal.ut.edu.vn/thong-bao/bao-tri-07-2026', (SELECT id FROM users WHERE username = 'admin' LIMIT 1), '2026-07-10 07:30:00', '2026-07-20 23:59:59', 'published')
+ON DUPLICATE KEY UPDATE
+    summary = VALUES(summary),
+    content = VALUES(content),
+    announcement_type = VALUES(announcement_type),
+    source_url = VALUES(source_url),
+    published_at = VALUES(published_at),
+    expires_at = VALUES(expires_at),
+    status = VALUES(status);
+
+INSERT INTO academic_deadlines (semester_id, title, deadline_type, description, starts_at, due_at, audience_type, audience_value, source_url, status)
+SELECT @semester_id, 'Hạn cuối điều chỉnh đăng ký học phần học kỳ hè', 'course_registration', 'Sinh viên hoàn tất điều chỉnh lớp học phần trên Portal trước thời hạn.', '2026-07-01 08:00:00', '2026-07-12 17:00:00', 'all', NULL, 'https://portal.ut.edu.vn/dang-ky-hoc-phan', 'published'
+WHERE NOT EXISTS (
+    SELECT 1 FROM academic_deadlines
+    WHERE title = 'Hạn cuối điều chỉnh đăng ký học phần học kỳ hè'
+      AND due_at = '2026-07-12 17:00:00'
+);
+
+INSERT INTO academic_deadlines (semester_id, title, deadline_type, description, starts_at, due_at, audience_type, audience_value, source_url, status)
+SELECT @semester_id, 'Hạn đóng học phí học kỳ hè 2025-2026', 'tuition', 'Sinh viên thanh toán phần học phí còn lại để không bị khóa lịch thi.', '2026-06-20 08:00:00', '2026-07-20 17:00:00', 'student', '075205019210', 'https://payment.ut.edu.vn', 'published'
+WHERE NOT EXISTS (
+    SELECT 1 FROM academic_deadlines
+    WHERE title = 'Hạn đóng học phí học kỳ hè 2025-2026'
+      AND due_at = '2026-07-20 17:00:00'
+      AND audience_value = '075205019210'
+);
+
+INSERT INTO academic_deadlines (semester_id, title, deadline_type, description, starts_at, due_at, audience_type, audience_value, source_url, status)
+SELECT @semester_id, 'Hạn phản hồi trùng lịch thi học kỳ hè', 'exam', 'Sinh viên gửi phản hồi nếu phát hiện trùng ca thi hoặc sai thông tin phòng thi.', '2026-07-08 08:00:00', '2026-07-18 17:00:00', 'all', NULL, 'https://support.ut.edu.vn', 'published'
+WHERE NOT EXISTS (
+    SELECT 1 FROM academic_deadlines
+    WHERE title = 'Hạn phản hồi trùng lịch thi học kỳ hè'
+      AND due_at = '2026-07-18 17:00:00'
+);
+
+-- A small verified RAG seed so academic knowledge queries have safe context. ---
+INSERT INTO knowledge_sources (
+    source_type, title, organization, source_url, retrieved_at, is_official, status
+)
+SELECT 'official_web', 'Portal UTH - dữ liệu mẫu đã kiểm duyệt', 'UTH', 'https://portal.ut.edu.vn', NOW(), TRUE, 'active'
+WHERE NOT EXISTS (
+    SELECT 1 FROM knowledge_sources
+    WHERE title = 'Portal UTH - dữ liệu mẫu đã kiểm duyệt'
+);
+
+SET @official_source_id = (
+    SELECT id
+    FROM knowledge_sources
+    WHERE title = 'Portal UTH - dữ liệu mẫu đã kiểm duyệt'
+    LIMIT 1
+);
+SET @admin_user_id = (SELECT id FROM users WHERE username = 'admin' LIMIT 1);
+
+INSERT INTO knowledge_articles (
+    source_id, title, category, subcategory, intent_code, keywords, answer_content,
+    route_url, audience, program_id, cohort_from, cohort_to, semester_code,
+    academic_year_code, valid_from, valid_until, verification_status,
+    confidence_level, priority, created_by, reviewed_by, reviewed_at
+)
+SELECT
+    @official_source_id,
+    'Quy định điều chỉnh đăng ký học phần học kỳ hè 2025-2026',
+    'Đăng ký học phần',
+    'Học kỳ hè',
+    'academic_knowledge',
+    'đăng ký học phần, điều chỉnh học phần, học kỳ hè, rút môn, thêm môn',
+    'Sinh viên điều chỉnh đăng ký học phần học kỳ hè 2025-2026 trực tiếp trên Portal trong thời gian trường công bố. Sau hạn điều chỉnh, sinh viên cần gửi yêu cầu hỗ trợ để được Phòng Đào tạo xem xét theo quy định.',
+    '/dang-ky-hoc-phan',
+    'student',
+    @program_id,
+    2023,
+    2023,
+    'HK_HE_2026',
+    '2025-2026',
+    '2026-07-01 00:00:00',
+    '2026-07-31 23:59:59',
+    'verified',
+    'authoritative',
+    1,
+    @admin_user_id,
+    @admin_user_id,
+    NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM knowledge_articles
+    WHERE title = 'Quy định điều chỉnh đăng ký học phần học kỳ hè 2025-2026'
+      AND deleted_at IS NULL
+);
+
+SET @article_dkhp_id = (
+    SELECT id
+    FROM knowledge_articles
+    WHERE title = 'Quy định điều chỉnh đăng ký học phần học kỳ hè 2025-2026'
+      AND deleted_at IS NULL
+    LIMIT 1
+);
+
+INSERT INTO knowledge_chunks (article_id, chunk_index, heading, chunk_text, token_count, content_hash)
+VALUES (
+    @article_dkhp_id,
+    0,
+    'Điều chỉnh đăng ký học phần học kỳ hè 2025-2026',
+    'Sinh viên điều chỉnh đăng ký học phần học kỳ hè 2025-2026 trực tiếp trên Portal trong thời gian trường công bố. Sau hạn điều chỉnh, sinh viên cần gửi yêu cầu hỗ trợ để được Phòng Đào tạo xem xét theo quy định.',
+    48,
+    SHA2('dkhp-he-2026', 256)
+)
+ON DUPLICATE KEY UPDATE
+    heading = VALUES(heading),
+    chunk_text = VALUES(chunk_text),
+    token_count = VALUES(token_count),
+    content_hash = VALUES(content_hash);
+
+INSERT INTO knowledge_articles (
+    source_id, title, category, subcategory, intent_code, keywords, answer_content,
+    route_url, audience, valid_from, valid_until, verification_status,
+    confidence_level, priority, created_by, reviewed_by, reviewed_at
+)
+SELECT
+    @official_source_id,
+    'Hướng dẫn tra cứu công nợ học phí trên Portal',
+    'Học phí',
+    'Tra cứu công nợ',
+    'academic_knowledge',
+    'học phí, công nợ, thanh toán học phí, cổng thanh toán',
+    'Sinh viên tra cứu công nợ và thanh toán học phí tại Cổng thanh toán hoặc mục học phí trên Portal. Các câu hỏi về số tiền còn nợ của từng sinh viên phải được tra cứu từ dữ liệu hóa đơn trong database.',
+    '/cong-thanh-toan',
+    'student',
+    '2026-07-01 00:00:00',
+    NULL,
+    'verified',
+    'authoritative',
+    1,
+    @admin_user_id,
+    @admin_user_id,
+    NOW()
+WHERE NOT EXISTS (
+    SELECT 1 FROM knowledge_articles
+    WHERE title = 'Hướng dẫn tra cứu công nợ học phí trên Portal'
+      AND deleted_at IS NULL
+);
+
+SET @article_tuition_id = (
+    SELECT id
+    FROM knowledge_articles
+    WHERE title = 'Hướng dẫn tra cứu công nợ học phí trên Portal'
+      AND deleted_at IS NULL
+    LIMIT 1
+);
+
+INSERT INTO knowledge_chunks (article_id, chunk_index, heading, chunk_text, token_count, content_hash)
+VALUES (
+    @article_tuition_id,
+    0,
+    'Tra cứu công nợ học phí',
+    'Sinh viên tra cứu công nợ và thanh toán học phí tại Cổng thanh toán hoặc mục học phí trên Portal. Các câu hỏi về số tiền còn nợ của từng sinh viên phải được tra cứu từ dữ liệu hóa đơn trong database.',
+    45,
+    SHA2('hoc-phi-cong-no-portal', 256)
+)
+ON DUPLICATE KEY UPDATE
+    heading = VALUES(heading),
+    chunk_text = VALUES(chunk_text),
+    token_count = VALUES(token_count),
+    content_hash = VALUES(content_hash);
+
+
+-- --- START OF FILE: database/faq_knowledge_seed.sql --- 
+
+-- ============================================================
+-- CSDL Kho Tri Thuc FAQ Truong Dai hoc Giao thong Van tai TP.HCM (UTH)
+-- Sinh tu file tai lieu nguon, dung de import vao XAMPP / phpMyAdmin (MySQL/MariaDB)
+-- ============================================================
+
+SET NAMES utf8mb4;
+SET FOREIGN_KEY_CHECKS=0;
+
+CREATE DATABASE IF NOT EXISTS `do_an_udpm`
+  DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE `do_an_udpm`;
+
+DROP TABLE IF EXISTS `faq`;
+CREATE TABLE `faq` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `topic_group` VARCHAR(255) DEFAULT NULL COMMENT 'Nhom chu de',
+  `tu_khoa` TEXT NOT NULL COMMENT 'Cau hoi / tu khoa sinh vien hay go',
+  `noi_dung` TEXT NOT NULL COMMENT 'Noi dung tra loi chuan xac cua truong',
+  `link_dieu_huong` VARCHAR(255) DEFAULT NULL COMMENT 'Link dieu huong den muc lien quan',
+  PRIMARY KEY (`id`),
+  KEY `idx_topic_group` (`topic_group`),
+  FULLTEXT KEY `ft_keywords_answer` (`tu_khoa`, `noi_dung`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  COMMENT='Kho tri thuc FAQ truong UTH';
+
+INSERT INTO `faq` (`id`, `topic_group`, `tu_khoa`, `noi_dung`, `link_dieu_huong`) VALUES
+(1, 'Thông tin chung', 'Địa chỉ trường ở đâu? UTH có mấy cơ sở? Trường nằm ở chỗ nào?', 'Trường Đại học Giao thông Vận tải TP.HCM (UTH) có cơ sở chính tại Số 2, Đường Võ Oanh, Phường 25, Quận Bình Thạnh, TP.HCM. Ngoài ra, trường còn có các cơ sở đào tạo khác tại Quận 12 (TP.HCM), TP. Thủ Đức và TP. Vũng Tàu. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về bãi giữ xe của trường, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(2, 'Chương trình Đào tạo', 'Trường có những ngành gì? Ngành CNTT học hệ nào? Đào tạo chất lượng cao là sao?', 'UTH là trường công lập đào tạo đa ngành hàng đầu về Giao thông vận tải, Logistics, Công nghệ thông tin, Khoa học dữ liệu, Điện tử viễn thông, Kinh tế vận tải và Kỹ thuật công trình. Hệ đào tạo gồm 2 loại hình: Hệ Đại trà và Hệ Chất lượng cao. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời gian nhận bằng tốt nghiệp và về xin hoãn đi thực tập tốt nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(3, 'Cách Tính Điểm', 'Cách tính điểm môn học thế nào? Điểm F là gì? Quy chế thang điểm chữ?', 'UTH áp dụng đào tạo theo hệ thống tín chỉ. Điểm tổng kết môn gồm: Điểm quá trình và Điểm thi kết thúc học phần. Điểm tính theo thang điểm 10 rồi quy đổi sang thang điểm chữ (A, B, C, D, F) tương ứng với thang điểm 4. Điểm F là rớt môn và bắt buộc phải đóng tiền đăng ký học lại. Ngoài ra, nếu bạn còn thắc mắc về xét giảm điểm rèn luyện hoặc về phúc khảo điểm thi, mình có thể hỗ trợ giải đáp thêm nhé.', '/ket-qua-hoc-tap'),
+(4, 'Học Cải Thiện', 'Điểm thấp có được học lại không? Làm sao để nâng điểm tích lũy?', 'Sinh viên đạt điểm trung bình môn ở mức D, D+, C, C+ muốn nâng cao điểm trung bình tích lũy (GPA) được phép đăng ký học cải thiện vào các học kỳ tiếp theo. Khi học cải thiện, điểm của lần học sau sẽ thay thế hoàn toàn cho điểm của lần học trước. Bên cạnh đó, nếu bạn cũng quan tâm về xét giảm điểm rèn luyện, hay về quy trình chấm điểm rèn luyện, cứ hỏi mình thêm nha.', '/ket-qua-hoc-tap'),
+(5, 'Cảnh Báo Học Vụ', 'Điều kiện xét nâng lớp? Khi nào bị cảnh báo học vụ? Bị buộc thôi học khi nào?', 'Sinh viên sẽ bị cảnh báo học vụ nếu điểm trung bình tích lũy học kỳ đạt dưới 0.8 (đối với học kỳ đầu tiên) hoặc dưới 1.0 (đối với các học kỳ tiếp theo), hoặc số tín chỉ bị nợ vượt quá quy định. Bị cảnh báo học vụ 2 lần liên tiếp sẽ thuộc diện xem xét buộc thôi học. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về xét giảm điểm rèn luyện và về điểm rèn luyện f — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(6, 'Đăng Ký Môn Học', 'Khi nào đăng ký học phần? Một kỳ được đăng ký tối đa bao nhiêu tín chỉ? Hủy môn học ở đâu?', 'Sinh viên thực hiện đăng ký học phần (DKMH) trực tuyến tại trang Portal UTH theo khung thời gian thông báo của Phòng Đào tạo. Sinh viên hệ đại trà được đăng ký tối đa 24 tín chỉ và tối thiểu 14 tín chỉ trong một học kỳ chính. Ngoài ra, nếu bạn còn thắc mắc về quy định số lần cảnh báo học vụ hoặc về cách tính điểm, mình có thể hỗ trợ giải đáp thêm nhé.', '/dang-ky-hoc-phan'),
+(7, 'Môn Điều Kiện', 'Môn tiên quyết là gì? Môn học trước là gì? Khác nhau thế nào?', 'Môn tiên quyết là môn sinh viên bắt buộc phải học và thi đạt (điểm chữ từ D trở lên) mới được đăng ký môn tiếp theo. Môn học trước là môn sinh viên chỉ cần hoàn thành khóa học (kể cả thi rớt điểm F) là đã đủ điều kiện đăng ký môn sau. Bên cạnh đó, nếu bạn cũng quan tâm về quy trình chấm điểm rèn luyện, hay về bảo lưu kết quả, cứ hỏi mình thêm nha.', '/dang-ky-mon-hoc-dieu-kien'),
+(8, 'Quy Chế Thi Cử', 'Xem lịch thi ở đâu? Vào phòng thi cần mang gì? Hoãn thi làm sao?', 'Lịch thi học kỳ được công bố trên Portal trước kỳ thi 2 tuần. Khi vào phòng thi, sinh viên bắt buộc phải xuất trình Thẻ sinh viên chính thức hoặc giấy tờ tùy thân có ảnh (CCCD). Sinh viên vắng thi không có lý do chính đáng sẽ nhận điểm 0. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về bảo lưu kết quả và về rút học phần, hủy môn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/lich-hoc-trong-tuan'),
+(9, 'Học Phí Trường', 'Học phí năm 2025 các ngành UTH? Học phí 2025 từng ngành? Học phí các ngành bao nhiêu? Học phí một tín chỉ bao nhiêu tiền? Học phí chương trình chuẩn 2025? Học phí chương trình tiên tiến 2025? Học phí đại trà 2025? Đóng tiền học ở đâu?', 'Học phí UTH được tính theo số tín chỉ đăng ký mỗi học kỳ và loại chương trình, không phải một mức cố định riêng cho từng ngành. Với khóa 2025 trong dữ liệu hiện có: chương trình chuẩn (đại trà) 400.000đ/tín chỉ; chương trình tiên tiến (trước đây gọi là Chất lượng cao) 980.000đ/tín chỉ. Với tân sinh viên khóa 2026: chương trình chuẩn 515.000đ/tín chỉ; chương trình tiên tiến 1.120.000đ/tín chỉ; chương trình hoàn toàn bằng tiếng Anh 1.500.000đ/tín chỉ. Tổng học phí mỗi học kỳ = đơn giá tín chỉ x số tín chỉ đăng ký, nên các ngành khác nhau có thể khác tổng tiền vì khác chương trình đào tạo hoặc số tín chỉ học trong kỳ. Trường cam kết không tăng học phí trong 3 năm đầu tính từ năm nhập học của mỗi khóa. Sinh viên nộp học phí trực tuyến qua Cổng thanh toán của trường (payment.ut.edu.vn) và nên tra cứu số tiền chính xác trên Portal cá nhân. Ngoài ra, nếu bạn còn thắc mắc về học phí chương trình tiên tiến hoặc về gia hạn học phí, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(10, 'Gia Hạn Học Phí', 'Không có tiền đóng học phí làm sao? Xin nợ học phí ở đâu?', 'Sinh viên có hoàn cảnh khó khăn không thể hoàn thành học phí đúng hạn phải làm Đơn xin gia hạn học phí trực tuyến gửi Phòng Công tác sinh viên trước thời hạn quy định để không bị khóa tài khoản đăng ký môn học và bị cấm thi. Bên cạnh đó, nếu bạn cũng quan tâm về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên, hay về bảo hiểm y tế, cứ hỏi mình thêm nha.', '/tra-cuu-cong-no'),
+(11, 'Hoạt Động Đoàn Hội', 'Lịch hiến máu tình nguyện? Tham gia hoạt động được cộng bao nhiêu điểm rèn luyện?', 'Ngày hội hiến máu tình nguyện trường UTH được tổ chức định kỳ hàng năm tại Sảnh lớn khu giảng đường A. Sinh viên tham gia hiến máu nhân đạo sẽ được cấp giấy chứng nhận, hỗ trợ chi phí và được cộng 5 điểm rèn luyện (ĐRL) vào mục hoạt động cộng đồng. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về ngày hội sáng tạo và về học bổng doanh nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(12, 'Các Câu Lạc Bộ', 'Trường có CLB guitar không? Đội tình nguyện hoạt động thế nào?', 'UTH hiện có hơn 20 Câu lạc bộ (CLB) sinh viên đang hoạt động thuộc các khối: Học thuật (CLB Tin học, CLB Logistics), Nghệ thuật (CLB Guitar, CLB Bước Nhảy), Thể thao (CLB Bóng đá, Bóng chuyền) và Tình nguyện (Đội Công tác xã hội, CLB Tiếp sức đến trường). Ngoài ra, nếu bạn còn thắc mắc về hoạt động đoàn hội hoặc về đăng ký tham gia hiến máu đợt hè, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(13, 'Học Bổng Khuyến Khích', 'Điều kiện nhận học bổng trường? Điểm rèn luyện bao nhiêu thì được học bổng?', 'Học bổng khuyến khích học tập UTH được xét sau mỗi học kỳ dựa trên 2 tiêu chí song song: Điểm trung bình học tập đạt loại Khá trở lên (từ 2.5/4.0) và Điểm rèn luyện đạt loại Tốt trở lên (từ 80 điểm/100), đồng thời không bị kỷ luật và không nợ môn. Bên cạnh đó, nếu bạn cũng quan tâm về chiến sĩ tình nguyện, hay về giải chạy sinh viên, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(14, 'Chuẩn Đầu Ra Ngoại Ngữ', 'Chuẩn tiếng Anh xét tốt nghiệp? Nộp bằng TOEIC ở đâu? Điều kiện miễn học Anh văn?', 'Sinh viên đại học chính quy UTH phải đạt chuẩn đầu ra tiếng Anh theo quy định (thường là TOEIC 450 trở lên hoặc B1 VSTEP tùy theo ngành học). Chứng chỉ phải còn giá trị hiệu lực và nộp về Trung tâm Ngoại ngữ trường để làm thủ tục hậu kiểm xét tốt nghiệp. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chuẩn tin học quốc tế nâng cao và về đăng ký thi lại chuẩn đầu ra — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(15, 'Chuẩn Tin Học', 'Chuẩn tin học đầu ra là gì? Chứng chỉ MOS hay IC3?', 'Sinh viên UTH bắt buộc phải hoàn thành chuẩn đầu ra Tin học bằng việc đạt chứng chỉ Tin học đại chúng đại học hoặc các chứng chỉ quốc tế được công nhận tương đương như MOS (đạt 3 kỹ năng Word, Excel, Powerpoint) hoặc IC3. Ngoài ra, nếu bạn còn thắc mắc về cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH hoặc về chuẩn tin học quốc tế nâng cao, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(16, 'Điều Kiện Tốt Nghiệp', 'Làm sao để được ra trường? Điều kiện xét tốt nghiệp UTH? Nợ môn có được xét tốt nghiệp?', 'Điều kiện xét công nhận tốt nghiệp UTH: Tích lũy đủ số tín chỉ của chương trình khung; Điểm trung bình tích lũy (GPA) toàn khóa đạt từ 2.0/4.0 trở lên; Đạt chuẩn đầu ra Ngoại ngữ và Tin học; Đạt chứng chỉ Giáo dục quốc phòng và Giáo dục thể chất; Không trong thời gian bị kỷ luật. Bên cạnh đó, nếu bạn cũng quan tâm về chuyển cơ sở học tập, hay về thủ tục chuyển ngành, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(17, 'Mất Thẻ Sinh Viên', 'Làm lại thẻ sinh viên ở đâu? Mất thẻ sinh viên đóng phạt bao nhiêu?', 'Khi bị mất thẻ, sinh viên đến Phòng Công tác sinh viên (Cơ sở chính, khu nhà A) để làm thủ tục xin cấp lại thẻ sinh viên mới. Lệ phí cấp lại thẻ theo quy định là 50.000đ. Trong thời gian chờ cấp thẻ mới, sinh viên được cấp giấy xác nhận tạm thời để ra vào trường. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về khóa tài khoản Portal và về quy định mượn học cụ, thiết bị tại phòng thí nghiệm — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(18, 'Ký Túc Xá Trường', 'Đăng ký ở KTX ở đâu? Chi phí Ký túc xá UTH? Đối tượng ưu tiên ở KTX?', 'UTH hỗ trợ chỗ ở tại Ký túc xá trường cho sinh viên (ưu tiên sinh viên diện chính sách, vùng sâu vùng xa, hoàn cảnh khó khăn). Sinh viên làm Đơn đăng ký nội trú trực tuyến trên Portal hoặc nộp hồ sơ trực tiếp tại Ban quản lý Ký túc xá trong thời gian quy định đầu năm học. Ngoài ra, nếu bạn còn thắc mắc về liên hệ ban quản lý ký túc xá hoặc về ký túc xá quận 12, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(19, 'Mượn Sách Thư Viện', 'Thư viện trường ở đâu? Cách mượn sách về nhà? Trả sách trễ hạn bị phạt thế nào?', 'Thư viện UTH đặt tại khu vực cơ sở chính. Sinh viên sử dụng Thẻ sinh viên để vào thư viện đọc sách hoặc làm thủ tục mượn tài liệu về nhà. Thời gian mượn tối đa là 2 tuần/cuốn. Nếu trả sách trễ hạn, sinh viên sẽ bị phạt tiền theo quy định của thư viện. Bên cạnh đó, nếu bạn cũng quan tâm về quy định mượn học cụ, thiết bị tại phòng thí nghiệm, hay về bảng điểm tiếng anh, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(20, 'Bảo Hiểm Y Tế', 'Đóng tiền bảo hiểm y tế ở đâu? Hạn chót nộp BHYT? Gia hạn bảo hiểm sinh viên?', 'Bảo hiểm y tế (BHYT) là hình thức bắt buộc đối với tất cả sinh viên. Nhà trường tổ chức thu tiền và gia hạn BHYT định kỳ vào đầu năm học thông qua Cổng thanh toán trực tuyến. Sinh viên có thẻ BHYT diện hộ nghèo, thân nhân quân nhân phải nộp bản photo minh chứng để được miễn giảm. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đóng lệ phí thi lại và về phí phạt nợ học phí quá hạn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/cong-thanh-toan'),
+(21, 'Sinh Viên 5 Tốt', 'Tiêu chí đạt Sinh viên 5 Tốt? Quyền lợi khi đạt Sinh viên 5 Tốt UTH?', 'Danh hiệu Sinh viên 5 Tốt được xét duyệt hàng năm dựa trên 5 tiêu chí: Học tập tốt (GPA >= 3.2 hoặc 2.8 tùy hệ), Đạo đức tốt (ĐRL >= 80), Thể lực tốt (đạt danh hiệu khỏe), Tình nguyện tốt (tham gia chiến dịch lớn), và Hội nhập tốt (đạt giải thưởng khoa học hoặc kỹ năng ngoại ngữ tốt). Ngoài ra, nếu bạn còn thắc mắc về ngày hội việc làm hoặc về khen thưởng sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(22, 'Nghiên Cứu Khoa Học', 'Đăng ký nghiên cứu khoa học ở đâu? Quyền lợi khi làm NCKH sinh viên?', 'Phong trào Nghiên cứu khoa học (NCKH) sinh viên UTH được phát động vào đầu học kỳ 1. Sinh viên đăng ký đề tài theo nhóm (dưới sự hướng dẫn của giảng viên) thông qua Phòng Quản lý khoa học. Đề tài nghiệm thu đạt loại Khá trở lên sẽ được cộng điểm rèn luyện và thưởng tiền mặt. Bên cạnh đó, nếu bạn cũng quan tâm về đại hội đoàn, hay về giải bóng đá UTH, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(23, 'Rút Học Phần, Hủy Môn', 'Cách rút môn học? Hạn chót hủy học phần đã đăng ký? Rút môn có được hoàn tiền không?', 'Trong 2 tuần đầu của học kỳ chính (hoặc 1 tuần đối với học kỳ hè), sinh viên được phép nộp đơn online để xin rút bớt học phần đã đăng ký. Học phần xin rút thành công sẽ ghi nhận điểm chữ W trên bảng điểm, không tính vào điểm trung bình tích lũy nhưng sinh viên không được hoàn lại học phí. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về quy chế thi cử và về quy trình chấm điểm rèn luyện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dang-ky-hoc-phan'),
+(24, 'Phòng Công Tác Sinh Viên', 'Liên hệ phòng CTSV ở đâu? Xin giấy xác nhận sinh viên vay vốn ở đâu?', 'Phòng Công tác sinh viên (CTSV) chịu trách nhiệm giải quyết các thủ tục: Cấp giấy xác nhận sinh viên để vay vốn ngân hàng, tạm hoãn nghĩa vụ quân sự, đánh giá điểm rèn luyện, giải quyết chế độ chính sách, miễn giảm học phí. Văn phòng đặt tại tầng trệt nhà A cơ sở chính. Ngoài ra, nếu bạn còn thắc mắc về minh chứng ĐRL hoặc về tư vấn tâm lý và hỗ trợ sinh viên gặp áp lực học đường, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(25, 'Phòng Đào Tạo', 'Số điện thoại Phòng Đào tạo? Hỏi về lịch học, lịch thi, xét tốt nghiệp ở đâu?', 'Phòng Đào tạo UTH là nơi giải quyết các vấn đề chuyên môn về: Khung lịch học, lịch thi, giải quyết đơn phúc khảo điểm thi, cấp bảng điểm chính thức, xử lý hồ sơ chuyển ngành, ngừng học tạm thời, bảo lưu kết quả, và xét công nhận tốt nghiệp. Bên cạnh đó, nếu bạn cũng quan tâm về các tuyến xe buýt, hay về đại hội đoàn, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(26, 'Ký Túc Xá Quận 12', 'KTX Quận 12 ở đâu? Đăng ký ký túc xá cơ sở 2? Chi phí phòng KTX Quận 12?', 'Cơ sở 2 của UTH tại Quận 12 có khu Ký túc xá khang trang dành riêng cho sinh viên học tập tại đây. Chi phí nội trú dao động từ 150.000đ - 250.000đ/tháng/sinh viên tùy loại phòng. Sinh viên nộp đơn đăng ký trực tiếp tại Ban quản lý KTX Cơ sở 2. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về liên hệ ban quản lý ký túc xá và về ký túc xá trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(27, 'Học Bổng Doanh Nghiệp', 'Học bổng tài trợ? Điều kiện nhận học bổng ngoài ngân sách? Học bổng vượt khó?', 'Ngoài học bổng khuyến khích của trường, sinh viên UTH còn có cơ hội nhận Học bổng tài trợ từ các tập đoàn, doanh nghiệp lớn đối tác (như các tổng công ty xây dựng, cảng biển, công ty công nghệ). Tiêu chí xét tuyển thường ưu tiên sinh viên nghèo vượt khó học giỏi hoặc có thành tích xuất sắc. Ngoài ra, nếu bạn còn thắc mắc về giải chạy sinh viên hoặc về học bổng liên kết, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(28, 'Các Tuyến Xe Buýt', 'Xe buýt nào đi qua trường UTH? Đi xe bus đến Võ Oanh? Xe bus qua cơ sở Bình Thạnh?', 'Cơ sở chính Võ Oanh (Bình Thạnh) có rất nhiều tuyến xe buýt đi qua như tuyến số 08, 14, 19, 43, 44, 93 (dừng tại trạm Điện Biên Phủ hoặc Nguyễn Văn Thương rồi đi bộ vào). Sinh viên được hưởng giá vé ưu đãi khi xuất trình Thẻ sinh viên UTH. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về thời gian giữ xe tối đa tại trường, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(29, 'Thủ Tục Chuyển Ngành', 'Làm sao để đổi ngành học? Điều kiện chuyển ngành UTH? Đang học có được đổi ngành khác?', 'Sinh viên được xem xét chuyển ngành nếu: Không thuộc diện bị buộc thôi học; Điểm xét tuyển đầu vào không thấp hơn điểm trúng tuyển của ngành muốn chuyển sang; Có đơn xin chuyển ngành và được sự đồng ý của cả hai Khoa chủ quản. Thủ tục làm tại Phòng Đào tạo vào cuối năm học thứ nhất. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đăng ký môn học và về cảnh báo học vụ — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(30, 'Bảo Lưu Kết Quả', 'Xin tạm dừng học? Cách làm đơn bảo lưu học tập? Nghỉ học tạm thời được bao lâu?', 'Sinh viên được xin nghỉ học tạm thời và bảo lưu kết quả học tập vì lý do cá nhân (như sức khỏe, hoàn cảnh gia đình hoặc thực hiện nghĩa vụ quân sự). Thời gian tạm dừng học không quá 2 học kỳ chính và phải làm đơn nộp về Phòng Đào tạo trước khi học kỳ mới bắt đầu. Ngoài ra, nếu bạn còn thắc mắc về đăng ký môn học hoặc về quy định số lần cảnh báo học vụ, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(31, 'Phúc Khảo Điểm Thi', 'Chấm phúc khảo ở đâu? Lệ phí phúc khảo bài thi? Thời hạn nộp đơn chấm phúc khảo?', 'Nếu thấy điểm thi kết thúc học phần không chính xác, sinh viên có quyền làm Đơn xin phúc khảo bài thi nộp về Phòng Đào tạo hoặc văn phòng Khoa trong vòng 5 ngày làm việc kể từ ngày công bố điểm. Lệ phí phúc khảo theo quy định hiện hành của trường. Bên cạnh đó, nếu bạn cũng quan tâm về quy định số lần cảnh báo học vụ, hay về thủ tục chuyển ngành, cứ hỏi mình thêm nha.', '/ket-qua-hoc-tap'),
+(32, 'Đồng Phục & Trang Phục', 'Quy định đồng phục UTH? Mặc áo gì đi học? Có bắt buộc mặc áo trường không?', 'Sinh viên khi đến trường UTH phải ăn mặc lịch sự, gọn gàng, không mặc quần đùi, áo ba lỗ, dép lê vào lớp. Nhà trường khuyến khích sinh viên mặc Áo thun đồng phục UTH hoặc áo sơ mi trắng vào các ngày lễ, các buổi sinh hoạt chung và các ngày cố định theo quy định của Khoa. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đăng ký cấp lại tài khoản email sinh viên và về phòng đào tạo — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(33, 'Kỷ Luật Học Đường', 'Quy chế kỷ luật sinh viên? Đi thi gian lận bị phạt thế nào? Quay cóp bài thi bị xử lý sao?', 'Sinh viên vi phạm quy chế thi cử (như mang tài liệu, điện thoại vào phòng thi, quay cóp) sẽ bị xử lý kỷ luật nghiêm khắc từ Đình chỉ thi môn đó, Nhận điểm 0, Cảnh cáo trước toàn trường, cho đến đình chỉ học tập có thời hạn hoặc buộc thôi học nếu tái phạm nhiều lần. Ngoài ra, nếu bạn còn thắc mắc về đồng phục & trang phục hoặc về quy định sử dụng mạng wifi nội bộ của trường, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(34, 'Văn Phòng Khoa CNTT', 'Liên hệ khoa CNTT ở đâu? Số điện thoại khoa Công nghệ thông tin UTH?', 'Văn phòng Khoa Công nghệ thông tin UTH chịu trách nhiệm quản lý chuyên môn ngành CNTT và Khoa học dữ liệu. Văn phòng khoa hỗ trợ sinh viên các vấn đề về: Đăng ký đồ án tốt nghiệp, thực tập doanh nghiệp, cố vấn học tập. Địa chỉ liên hệ đặt tại Khu nhà C, Cơ sở chính. Bên cạnh đó, nếu bạn cũng quan tâm về đồng phục & trang phục, hay về đại hội đoàn, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(35, 'Văn Phòng Khoa Viện', 'Liên hệ Viện Logistics ở đâu? Văn phòng Khoa Kinh tế vận tải nằm ở đâu?', 'Các văn phòng Khoa chuyên ngành (như Viện Logistics và Quản lý chuỗi cung ứng, Khoa Kinh tế vận tải, Khoa Công trình giao thông, Khoa Điện - Điện tử viễn thông) đều có văn phòng trực ban tại các khu nhà chức năng cơ sở chính để hỗ trợ giải quyết lịch học chuyên ngành cho sinh viên. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời gian giữ xe tối đa tại trường và về bãi giữ xe của trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(36, 'Giáo Dục Quốc Phòng', 'Học quân sự ở đâu? Lịch học giáo dục quốc phòng? Đi học quân sự cần chuẩn bị gì?', 'Sinh viên UTH tham gia học môn Giáo dục quốc phòng - An ninh tập trung tại Trung tâm Giáo dục Quốc phòng theo lịch phân bổ của trường. Sinh viên được rèn luyện trong môi trường quân đội nội trú, phải tuân thủ nghiêm ngặt giờ giấc, tác phong quân kỷ và mặc quân phục. Ngoài ra, nếu bạn còn thắc mắc về giáo dục thể chất hoặc về thủ tục xin miễn học thể dục, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(37, 'Giáo Dục Thể Chất', 'Học thể dục ở đâu? Các môn thể dục UTH? Đăng ký học môn thể thao nào?', 'Môn Giáo dục thể chất (Thể dục) tại UTH rất đa dạng, sinh viên được tự chọn đăng ký các môn thể thao yêu thích trên Portal như: Bóng đá, Bóng chuyền, Bóng rổ, Cầu lông, Cờ vua hoặc Võ thuật. Sinh viên phải thi đạt môn này mới đủ điều kiện xét tốt nghiệp. Bên cạnh đó, nếu bạn cũng quan tâm về cấp lại giấy chứng nhận quốc phòng, hay về thủ tục xin miễn học thể dục, cứ hỏi mình thêm nha.', '/dang-ky-hoc-phan'),
+(38, 'Cấp Lại Bảng Điểm', 'Xin cấp bảng điểm học tập ở đâu? Lệ phí in bảng điểm chính thức?', 'Sinh viên cần bảng điểm chính thức (có mộc đỏ của trường) để xin việc làm hoặc nộp hồ sơ học bổng phải làm Đơn xin cấp bảng điểm tại máy tự động hoặc nộp trực tiếp tại Phòng Đào tạo. Lệ phí in bảng điểm được tính theo số lượng bản sao quy định. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về khóa tài khoản Portal và về mượn thiết bị âm thanh, sự kiện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(39, 'Phạt Tiền Thư Viện', 'Làm mất sách thư viện đền tiền thế nào? Quên trả sách thư viện bị phạt bao nhiêu?', 'Sinh viên mượn tài liệu thư viện UTH nếu làm mất hoặc hư hỏng phải mua đền cuốn sách mới tương đương hoặc đền tiền gấp nhiều lần giá trị cuốn sách theo quy chế. Trả sách trễ hạn sẽ bị phạt số tiền tính theo từng ngày trễ hạn và bị tạm khóa thẻ thư viện. Ngoài ra, nếu bạn còn thắc mắc về mượn sách thư viện hoặc về mất thẻ sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(40, 'Nguyện Vọng Bổ Sung', 'Trường có xét tuyển bổ sung không? Điều kiện xét tuyển đợt 2 UTH?', 'Trong trường hợp các ngành học chưa tuyển đủ chỉ tiêu đợt 1, Hội đồng tuyển sinh UTH sẽ thông báo nhận hồ sơ Xét tuyển nguyện vọng bổ sung (Đợt 2) trên trang tuyển sinh chính thức của trường. Thí sinh nộp hồ sơ theo phương thức xét điểm thi tốt nghiệp THPT hoặc học bạ. Bên cạnh đó, nếu bạn cũng quan tâm về đăng ký nguyện vọng vào UTH trên hệ thống của bộ GD&ĐT, hay về tiếp nhận hồ sơ đăng ký xét tuyển học bạ đợt tiếp theo, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(41, 'Bảng Điểm Tiếng Anh', 'Xin bảng điểm bằng tiếng Anh ở đâu? Lệ phí dịch thuật bảng điểm UTH? Cấp bảng điểm song ngữ?', 'Sinh viên có nhu cầu cấp bảng điểm bằng tiếng Anh (hoặc song ngữ) để làm hồ sơ du học, săn học bổng quốc tế hoặc nộp cho doanh nghiệp nước ngoài thì làm đơn đăng ký tại Phòng Đào tạo. Thời gian xử lý và cấp phát từ 3 đến 5 ngày làm việc kèm theo lệ phí in ấn quy định. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời hạn sử dụng của thẻ thư viện và về mượn thiết bị âm thanh, sự kiện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(42, 'Phúc Khảo Đồ Án', 'Đồ án tốt nghiệp có được phúc khảo không? Chấm lại điểm khóa luận tốt nghiệp?', 'Theo quy chế học vụ UTH, điểm bảo vệ Đồ án tốt nghiệp hoặc Khóa luận tốt nghiệp sẽ KHÔNG được chấm phúc khảo. Điểm số cuối cùng do Hội đồng chấm tốt nghiệp quyết định ngay tại buổi bảo vệ công khai. Sinh viên chỉ được quyền khiếu nại nếu có sai sót trong quá trình cộng điểm hoặc nhập điểm vào hệ thống. Ngoài ra, nếu bạn còn thắc mắc về quy chế thi cử hoặc về xét giảm điểm rèn luyện, mình có thể hỗ trợ giải đáp thêm nhé.', '/ket-qua-hoc-tap'),
+(43, 'Khóa Tài Khoản Portal', 'Tại sao tài khoản Portal bị khóa? Lỗi không đăng nhập được trang sinh viên?', 'Tài khoản Portal của sinh viên UTH thường bị khóa vì các lý do sau: Nợ học phí quá hạn quy định; Chưa hoàn thành các khảo sát bắt buộc của trường; Hoặc nhập sai mật khẩu quá 5 lần liên tiếp. Sinh viên cần liên hệ Phòng Đào tạo hoặc Phòng Công tác sinh viên để kiểm tra lý do và mở khóa. Bên cạnh đó, nếu bạn cũng quan tâm về tư vấn tâm lý và hỗ trợ sinh viên gặp áp lực học đường, hay về hủy tư cách đoàn viên, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(44, 'Bãi Giữ Xe Của Trường', 'Bãi xe trường ở đâu? Giá vé gửi xe máy UTH? Gửi xe qua đêm tại trường được không?', 'UTH có bãi giữ xe dành cho sinh viên tại tất cả các cơ sở. Giá vé gửi xe máy áp dụng theo đúng quy định nhà nước. Sinh viên tuyệt đối không được gửi xe qua đêm tại trường trừ các trường hợp đặc biệt được Đoàn trường hoặc Ban quản lý cơ sở cấp phép trước bằng văn bản. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về liên hệ ban quản lý ký túc xá và về quy định sử dụng mạng wifi nội bộ của trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(45, 'Miễn Giảm Anh Em Ruột', 'Anh em ruột cùng học UTH có được giảm học phí? Chính sách giảm học phí gia đình?', 'Nhà trường áp dụng chính sách hỗ trợ học phí cho gia đình có từ 2 anh/chị/em ruột trở lên đang cùng theo học hệ chính quy tại UTH. Mức giảm thường là 10% đến 20% học phí cho người em. Sinh viên cần nộp Giấy khai sinh bản sao và Đơn đề nghị về Phòng Công tác sinh viên đầu học kỳ. Ngoài ra, nếu bạn còn thắc mắc về gia hạn học phí hoặc về bảo hiểm y tế, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(46, 'Đổi Lịch Thi Học Kỳ', 'Làm sao để xin đổi ca thi? Bị trùng lịch thi phải làm thế nào? Trùng giờ thi xử lý sao?', 'Trường hợp sinh viên bị trùng lịch thi 2 môn trong cùng 1 ca hoặc có lý do bất khả kháng (tai nạn, nằm viện), sinh viên phải mang minh chứng đến Phòng Đào tạo trước ngày thi ít nhất 3 ngày để làm đơn xin chuyển ca thi hoặc đăng ký thi ghép vào đợt thi của lớp khác. Bên cạnh đó, nếu bạn cũng quan tâm về bảo lưu kết quả, hay về quy định số lần cảnh báo học vụ, cứ hỏi mình thêm nha.', '/lich-hoc-trong-tuan'),
+(47, 'Quên Mật Khẩu Portal', 'Làm sao lấy lại mật khẩu Portal? Quên pass trang sinh viên UTH?', 'Nếu quên mật khẩu đăng nhập hệ thống Portal, sinh viên bấm vào nút "Quên mật khẩu" trên giao diện đăng nhập để nhận mã khôi phục qua Email sinh viên (@ut.edu.vn). Nếu không làm được, sinh viên mang Thẻ sinh viên đến trực tiếp Phòng Đào tạo để được cấp lại mật khẩu mới. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về khóa tài khoản Portal và về đăng ký cấp lại tài khoản email sinh viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(48, 'Phòng Y Tế Trường', 'Trạm y tế trường nằm ở đâu? Khám sức khỏe sinh viên đầu năm ở đâu?', 'Phòng Y tế UTH nằm tại khu vực tầng trệt cơ sở chính. Đây là nơi tiếp nhận, sơ cứu và cấp phát thuốc cơ bản miễn phí cho sinh viên khi gặp các vấn đề về sức khỏe trong quá trình học tập tại trường. Đồng thời là nơi tổ chức khám sức khỏe định kỳ bắt buộc cho tân sinh viên. Ngoài ra, nếu bạn còn thắc mắc về đồng phục & trang phục hoặc về quy định sử dụng mạng wifi nội bộ của trường, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(49, 'Học Bổng Liên Kết', 'Học bổng du học UTH? Chương trình trao đổi sinh viên quốc tế?', 'UTH liên kết với nhiều trường Đại học lớn tại Hàn Quốc, Nhật Bản, Hà Lan, Anh Quốc để triển khai các chương trình trao đổi sinh viên và học bổng du học hệ 2+2 hoặc 3+1. Sinh viên có học lực Giỏi và đạt chuẩn tiếng Anh (IELTS/TOEFL) cao sẽ được xét duyệt hồ sơ tham gia. Bên cạnh đó, nếu bạn cũng quan tâm về học bổng khuyến khích, hay về hoạt động đoàn hội, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(50, 'Sinh Hoạt Công Dân', 'Tuần sinh hoạt công dân học khi nào? Không học sinh hoạt công dân có bị sao không?', 'Tuần sinh hoạt công dân - học sinh sinh viên được tổ chức bắt buộc vào đầu mỗi năm học. Sinh viên phải tham gia đầy đủ và làm bài kiểm tra thu hoạch đạt yêu cầu. Vắng mặt không lý do sẽ bị trừ điểm rèn luyện nghiêm khắc và xét kỷ luật tùy mức độ. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về giải chạy sinh viên và về học bổng khuyến khích — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(51, 'Chuyển Cơ Sở Học Tập', 'Sinh viên có được đổi cơ sở học không? Đang học Quận 12 chuyển qua Bình Thạnh?', 'Việc phân bổ cơ sở học tập (Bình Thạnh hoặc Quận 12) phụ thuộc hoàn toàn vào chuyên ngành và kế hoạch đào tạo của từng Khoa/Viện. Sinh viên KHÔNG được tự ý xin chuyển cơ sở học tập cá nhân trừ khi có sự điều chỉnh quy hoạch lớp học từ phía Ban giám hiệu nhà trường. Ngoài ra, nếu bạn còn thắc mắc về chương trình đào tạo hoặc về xin hoãn đi thực tập tốt nghiệp, mình có thể hỗ trợ giải đáp thêm nhé.', '/chuong-trinh-khung'),
+(52, 'Mượn Phòng Học', 'Làm sao để mượn phòng học làm hoạt động? Thủ tục mượn hội trường UTH?', 'Các Ban cán sự lớp hoặc Câu lạc bộ muốn mượn phòng học, giảng đường hoặc Hội trường để tổ chức sinh hoạt, họp hành, tập văn nghệ phải làm Đơn xin mượn phòng (có xác nhận của Bí thư Đoàn trường hoặc Trưởng Khoa) nộp về Phòng Quản trị thiết bị trước ít nhất 2 ngày. Bên cạnh đó, nếu bạn cũng quan tâm về thời hạn sử dụng của thẻ thư viện, hay về khóa tài khoản Portal, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(53, 'Hỗ Trợ Khởi Nghiệp', 'Cuộc thi khởi nghiệp sinh viên UTH? Quỹ hỗ trợ ý tưởng sáng tạo?', 'Nhà trường thường xuyên tổ chức các cuộc thi Ý tưởng khởi nghiệp sáng tạo sinh viên UTH. Các dự án tiềm năng và đạt giải cao sẽ được Câu lạc bộ Khởi nghiệp của trường hỗ trợ không gian làm việc, kết nối với các quỹ đầu tư và cố vấn chuyên môn để phát triển thành dự án thực tế. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về sinh viên 5 tốt và về khen thưởng sinh viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(54, 'Giấy Chứng Nhận Tạm Thời', 'Xin giấy chứng nhận sinh viên tạm thời ở đâu? Thời gian cấp giấy xác nhận là bao lâu?', 'Để phục vụ các nhu cầu cấp bách (như làm hồ sơ xin việc, chứng minh thông tin khi chưa có thẻ nhựa), sinh viên đăng ký xin cấp Giấy chứng nhận sinh viên tạm thời tại văn phòng Phòng Công tác sinh viên. Giấy xác nhận này có mộc đỏ và giá trị pháp lý ngắn hạn. Ngoài ra, nếu bạn còn thắc mắc về bảng điểm tiếng anh hoặc về quên mật khẩu Portal, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(55, 'Văn Phòng Đoàn Thanh Niên', 'Văn phòng Đoàn trường UTH ở đâu? Đăng ký sổ Đoàn, nộp sổ Đoàn ở đâu?', 'Văn phòng Đoàn Thanh niên - Hội Sinh viên UTH đặt tại cơ sở chính Võ Oanh. Đây là nơi quản lý toàn bộ hồ sơ đoàn viên, tiếp nhận sổ Đoàn của sinh viên đầu năm học, xét duyệt các danh hiệu thi đua, cộng điểm rèn luyện và tổ chức các chiến dịch lớn như Mùa hè xanh, Tiếp sức mùa thi. Bên cạnh đó, nếu bạn cũng quan tâm về sinh hoạt công dân, hay về mượn thiết bị âm thanh, sự kiện, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(56, 'Khảo Sát Ý Kiến Sinh Viên', 'Khảo sát môn học làm ở đâu? Không làm khảo sát giảng viên có bị sao không?', 'Cuối mỗi học kỳ, UTH bắt buộc sinh viên phải tham gia Khảo sát ý kiến về hoạt động giảng dạy của giảng viên trực tuyến trên trang Portal. Sinh viên cố tình không hoàn thành khảo sát đúng hạn sẽ bị tạm khóa chức năng xem điểm thi học kỳ và khóa lịch đăng ký môn học. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về hoạt động đoàn hội và về học bổng liên kết — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(57, 'Đóng Lệ Phí Thi Lại', 'Thi lại có tốn tiền không? Lệ phí thi lại đóng ở đâu?', 'Đối với các môn học bị điểm F, sinh viên áp dụng quy chế học chế tín chỉ của UTH là phải đăng ký học lại và đóng tiền học phí tính theo số tín chỉ môn đó giống như học mới, trường KHÔNG tổ chức kỳ thi lại độc lập thu phí riêng như hệ niên chế cũ. Ngoài ra, nếu bạn còn thắc mắc về lệ phí xét tuyển hồ sơ đầu vào hoặc về miễn giảm anh em ruột, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(58, 'Thực Tập Tốt Nghiệp', 'Lịch đi thực tập của sinh viên năm cuối? Xin giấy giới thiệu thực tập ở đâu?', 'Sinh viên năm cuối đủ điều kiện sẽ tham gia học phần Thực tập tốt nghiệp. Sinh viên đến văn phòng Khoa/Viện chủ quản để nhận Giấy giới thiệu thực tập nộp cho doanh nghiệp. Sau khi kết thúc, phải nộp lại Báo cáo thực tập có nhận xét và mộc tròn của công ty. Bên cạnh đó, nếu bạn cũng quan tâm về quy định tham quan kiến tập thực tế tại doanh nghiệp, hay về thời gian nhận bằng tốt nghiệp, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(59, 'Đồ Án Tốt Nghiệp', 'Điều kiện được làm đồ án ra trường? Điểm GPA bao nhiêu thì được làm khóa luận tốt nghiệp?', 'Điều kiện để sinh viên UTH được giao đề tài làm Đồ án/Khóa luận tốt nghiệp: Tính đến học kỳ xét, sinh viên không bị cảnh báo học vụ; Tích lũy tối thiểu 80% đến 90% số tín chỉ toàn khóa; Điểm trung bình GPA đạt mức quy định riêng của từng Khoa/Viện chuyên ngành. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đồ án tốt nghiệp đạt điểm f xử lý sao và về quy trình làm thủ tục nhập học trực tiếp tại trường — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(60, 'Khen Thưởng Sinh Viên', 'Sinh viên xuất sắc được thưởng gì? Tiêu chuẩn xét khen thưởng danh hiệu học tập?', 'Kết thúc mỗi năm học, nhà trường tiến hành xét khen thưởng cho sinh viên đạt danh hiệu Sinh viên Xuất sắc (GPA >= 3.6/4.0) và Sinh viên Giỏi (GPA >= 3.2/4.0) kèm theo điểm rèn luyện loại Tốt trở lên. Sinh viên được tặng giấy khen của Hiệu trưởng và nhận tiền thưởng tương ứng. Ngoài ra, nếu bạn còn thắc mắc về đăng ký tham gia câu lạc bộ hoặc về mượn thiết bị âm thanh, sự kiện, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(61, 'Mùa Hè Xanh UTH', 'Đăng ký Mùa hè xanh ở đâu? Tiêu chí tuyển chiến sĩ MHX? Đi MHX được bao nhiêu ĐRL?', 'Chiến dịch tình nguyện Mùa Hè Xanh UTH do Đoàn trường tổ chức vào tháng 7 hằng năm. Sinh viên đăng ký qua form chính thức của Đoàn Khoa/Viện. Tiêu chí tuyển chọn dựa trên sức khỏe, đạo đức tốt và tích cực tham gia phong trào. Hoàn thành chiến dịch được cộng tối đa 15-20 điểm rèn luyện. Bên cạnh đó, nếu bạn cũng quan tâm về khen thưởng sinh viên, hay về hội thảo kỹ năng, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(62, 'Tiếp Sức Mùa Thi', 'Đăng ký Tiếp sức mùa thi UTH? Lịch chạy chương trình TSMT?', 'Chương trình Tiếp sức mùa thi diễn ra vào tháng 6 hằng năm nhằm hỗ trợ thí sinh thi THPT Quốc tế. Sinh viên UTH đăng ký tham gia thông qua Hội Sinh viên trường. Chiến sĩ TSMT sẽ trực tại các điểm trường thi để phân luồng giao thông, hỗ trợ nước uống và chỉ đường. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về văn phòng đoàn thanh niên và về các câu lạc bộ — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(63, 'Xuân Tình Nguyện', 'Lịch chạy Xuân tình nguyện UTH? Đăng ký đi XTN ở đâu? Chi phí đóng góp XTN?', 'Chiến dịch Xuân Tình Nguyện UTH diễn ra vào dịp cận Tết Nguyên Đán. Các đội hình sẽ thực hiện hoạt động gói bánh chưng, tặng quà cho trẻ em cơ nhỡ, người già neo đơn và dọn dẹp nghĩa trang liệt sĩ. Sinh viên đăng ký qua Fanpage Đoàn - Hội của Khoa/Viện. Ngoài ra, nếu bạn còn thắc mắc về sinh viên 5 tốt hoặc về mượn thiết bị âm thanh, sự kiện, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(64, 'Giải Chạy Sinh Viên', 'Giải chạy bộ UTH? Đăng ký chạy marathon trường ở đâu? Minh chứng hoàn thành giải chạy?', 'UTH thường xuyên tổ chức hoặc liên kết các giải chạy bộ (Marathon trực tuyến/trực tiếp qua app Strava). Sinh viên hoàn thành cự ly quy định (thường là 21km hoặc 42km tích lũy) sẽ đạt tiêu chí "Thể lực tốt" phục vụ xét danh hiệu Sinh viên 5 Tốt và được cộng ĐRL. Bên cạnh đó, nếu bạn cũng quan tâm về khen thưởng sinh viên, hay về đăng ký tham gia hiến máu đợt hè, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(65, 'Ngày Hội Sáng Tạo', 'Cuộc thi ý tưởng sáng tạo UTH? Sáng tạo trẻ sinh viên giao thông?', 'Ngày hội Sáng tạo trẻ UTH là sân chơi khoa học công nghệ, trưng bày các mô hình, phần mềm độc đáo do sinh viên tự nghiên cứu (robot, mô hình cầu đường, app quản lý vận tải). Đề tài đạt giải cao sẽ được hỗ trợ kinh phí tham gia các cuộc thi cấp Thành phố. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chiến sĩ tình nguyện và về hủy tư cách đoàn viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(66, 'Chiến Sĩ Tình Nguyện', 'Danh hiệu Chiến sĩ tình nguyện xuất sắc? Làm sao để được tặng bằng khen MHX?', 'Kết thúc mỗi chiến dịch tình nguyện (MHX, XTN, TSMT), Ban chỉ huy chiến dịch sẽ tổ chức họp xét để tuyên dương các cá nhân có đóng góp xuất sắc. Chiến sĩ đạt danh hiệu sẽ được tặng Giấy khen của Hiệu trưởng hoặc Ủy ban Hội Sinh viên Thành phố. Ngoài ra, nếu bạn còn thắc mắc về tiếp sức mùa thi hoặc về đăng ký tham gia câu lạc bộ, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(67, 'Đại Hội Đoàn - Hội', 'Lịch tổ chức Đại hội Đại biểu? Đi bầu cử Đoàn Thanh niên ở đâu?', 'Đại hội Đại biểu Đoàn TNCS Hồ Chí Minh và Đại hội Hội Sinh viên Việt Nam trường UTH được tổ chức định kỳ để bầu ra Ban chấp hành mới. Sinh viên là Đại biểu chính thức sẽ tham gia họp và bỏ phiếu tại Hội trường lớn cơ sở chính Võ Oanh. Bên cạnh đó, nếu bạn cũng quan tâm về học bổng liên kết, hay về văn phòng khoa CNTT, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(68, 'Cắm Trại Truyền Thống', 'Hội trại truyền thống UTH học kỳ nào? Địa điểm cắm trại trường? Chi phí hội trại?', 'Hội trại truyền thống UTH thường được tổ chức nhân dịp kỷ niệm ngày thành lập Đoàn 26/03 hoặc ngày truyền thống trường. Địa điểm tổ chức có thể tại sân trường cơ sở Quận 12 hoặc các khu du lịch dã ngoại. Hội trại gồm các hoạt động dựng trại, trò chơi lớn và đêm lửa trại. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về các câu lạc bộ và về chiến sĩ đỏ — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(69, 'Giải Bóng Đá UTH', 'Giải bóng đá nam/nữ trường UTH? Đăng ký đá banh giải trường ở đâu?', 'Giải bóng đá truyền thống sinh viên UTH tổ chức hằng năm tại sân bóng cỏ nhân tạo. Các đội bóng tham gia tranh tài theo đơn vị lớp hoặc Liên quân Khoa/Viện. Lịch thi đấu và thể lệ được Ban thể thao thuộc Hội sinh viên trường công bố công khai đầu học kỳ 2. Ngoài ra, nếu bạn còn thắc mắc về hoạt động "hiến máu tình nguyện" lần 2 trong năm hoặc về tham gia hiến máu có được nghỉ học, mình có thể hỗ trợ giải đáp thêm nhé.', '/dang-ky-hoc-phan'),
+(70, 'Văn Nghệ Tiếng Hát', 'Cuộc thi tiếng hát sinh viên UTH? Cuộc thi văn nghệ UTH Got Talent?', 'Cuộc thi văn nghệ truyền thống (Tiếng hát sinh viên UTH) là nơi tìm kiếm các tài năng âm nhạc, nhạc cụ, nhảy hiện đại, múa dân gian. Sinh viên đăng ký tiết mục đơn ca, song ca hoặc tốp ca trực tiếp với Đội văn nghệ xung kích của trường để tham gia vòng sơ loại. Bên cạnh đó, nếu bạn cũng quan tâm về chính sách học bổng tuyển sinh, hay về hội thảo kỹ năng, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(71, 'Chiến Sĩ Đỏ - Hiến Máu', 'Đội tình nguyện hiến máu UTH? Câu lạc bộ Hành Trình Đỏ UTH?', 'Câu lạc bộ Hành Trình Đỏ / Đội Tình nguyện Hiến máu UTH là đơn vị nòng cốt phối hợp với Trung tâm hiến máu nhân đạo TP.HCM để tổ chức các đợt hiến máu tại trường. Thành viên đội sẽ hỗ trợ điều phối, hướng dẫn sinh viên điền form và chăm sóc sinh viên sau hiến máu. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về giải chạy sinh viên và về đại hội đoàn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(72, 'Minh Chứng ĐRL', 'Nộp minh chứng hoạt động ở đâu? Quên nộp minh chứng có được cộng điểm rèn luyện?', 'Khi tham gia các hoạt động bên ngoài trường (Hiến máu, Tình nguyện hè, Giải chạy), sinh viên phải giữ lại Giấy chứng nhận bản cứng hoặc chụp màn hình kết quả. Sau đó, đăng nhập hệ thống Portal nộp minh chứng đúng thời hạn quy định để Lớp trưởng xét cộng ĐRL. Ngoài ra, nếu bạn còn thắc mắc về bảng điểm tiếng anh hoặc về cấp lại bảng điểm, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(73, 'Điểm Rèn Luyện F', 'Điểm rèn luyện dưới 50 bị phạt thế nào? ĐRL loại Yếu có được tốt nghiệp không?', 'Sinh viên có điểm rèn luyện xếp loại Yếu (dưới 50 điểm) hoặc Kém (dưới 35 điểm) trong một năm học sẽ bị đưa vào danh sách kỷ luật cảnh cáo. Nếu bị xếp loại yếu, kém 2 học kỳ liên tiếp sẽ bị đình chỉ học tập 1 học kỳ; nếu bị lần thứ 3 sẽ bị buộc thôi học. Bên cạnh đó, nếu bạn cũng quan tâm về quy chế thi cử, hay về đăng ký môn học, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(74, 'Ngày Hội Việc Làm', 'UTH Job Fair tổ chức khi nào? Sinh viên năm nhất có được tham gia ngày hội việc làm?', 'Ngày hội việc làm UTH Job Fair diễn ra định kỳ hằng năm tại sân trường cơ sở chính. Hoạt động này thu hút hàng chục doanh nghiệp lớn đến phỏng vấn tuyển dụng trực tiếp, nhận hồ sơ thực tập. Tất cả sinh viên các năm đều được tham gia tự do để tìm kiếm cơ hội. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chính sách học bổng tuyển sinh và về đại hội đoàn — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(75, 'Hội Thảo Kỹ Năng', 'Lớp học kỹ năng mềm UTH? Đăng ký chuyên đề kỹ năng ở đâu? Có tính ĐRL không?', 'Phòng Công tác sinh viên phối hợp với các chuyên gia tổ chức các buổi Hội thảo kỹ năng mềm (Kỹ năng viết CV, kỹ năng giao tiếp, quản lý thời gian). Sinh viên quét mã QR điểm danh tại hội trường sẽ được tự động cộng 2-3 điểm rèn luyện vào hệ thống Portal. Ngoài ra, nếu bạn còn thắc mắc về ngày hội việc làm hoặc về văn phòng đoàn thanh niên, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(76, 'Học phí chương trình tiên tiến (trước đây gọi là Chất lượng cao - CLC)', 'Học phí hệ chất lượng cao là bao nhiêu? Tại sao học phí CLC lại cao hơn đại trà? Tổng tiền học phí CLC một năm?', 'UTH hiện gọi chương trình Chất lượng cao trước đây là "Chương trình tiên tiến". Mức học phí chương trình tiên tiến áp dụng cho tân sinh viên khóa 2026 là 1.120.000đ/tín chỉ (khóa 2025 áp dụng mức 980.000đ/tín chỉ). Với chương trình đào tạo chuẩn hóa 120 tín chỉ toàn khóa, tổng học phí chương trình tiên tiến trọn khóa (học đúng tiến độ, chưa gồm các khoản phí khác) theo mức khóa 2026 vào khoảng 134 triệu đồng. Mức phí chương trình tiên tiến cao hơn chương trình chuẩn do quy mô lớp nhỏ, tăng cường thời lượng tiếng Anh chuyên ngành, cơ sở vật chất hiện đại và có các học phần trải nghiệm/kiến tập tại doanh nghiệp. Mỗi khóa nhập học có mức học phí niêm yết riêng và trường cam kết không tăng học phí trong 3 năm đầu tính từ năm nhập học. Bên cạnh đó, nếu bạn cũng quan tâm về miễn giảm anh em ruột, hay về chính sách hỗ trợ bảo hiểm tai nạn, cứ hỏi mình thêm nha.', '/cong-thanh-toan'),
+(77, 'Quy trình chấm Điểm rèn luyện (ĐRL) hằng kỳ', 'Cách chấm điểm rèn luyện như thế nào? Quy trình họp xét ĐRL của lớp? Khi nào bắt đầu tự đánh giá ĐRL?', 'Quy trình chấm Điểm rèn luyện hằng kỳ tại UTH được thực hiện qua 3 bước bắt buộc: - Sinh viên đăng nhập hệ thống Portal tự đánh giá điểm cá nhân theo các mục quy định. - Tập thể lớp tổ chức họp dưới sự chủ trì của Ban cán sự lớp để thông qua và chấm điểm cho từng sinh viên. - Cố vấn học tập (Giảng viên chủ nhiệm) phê duyệt và gửi danh sách chính thức về Phòng Công tác sinh viên để lưu hệ thống. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về cảnh báo học vụ và về thủ tục phúc khảo điểm quá trình — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-ca-nhan'),
+(78, 'Thẻ bảo hiểm y tế điện tử (VssID)', 'Xem thẻ bảo hiểm y tế ở đâu? Cách đăng ký tài khoản VssID sinh viên? Mất thẻ bảo hiểm y tế giấy phải làm sao?', 'Nhà trường không cấp thẻ Bảo hiểm y tế (BHYT) bằng giấy vật lý cho sinh viên nữa. Sau khi đóng lệ phí gia hạn BHYT thành công trên cổng thanh toán của trường, sinh viên tải ứng dụng VssID (Bảo hiểm xã hội số) trên điện thoại và đăng ký tài khoản bằng mã số bảo hiểm của mình để sử dụng thẻ BHYT điện tử khi đi khám chữa bệnh tại các bệnh viện. Ngoài ra, nếu bạn còn thắc mắc về chính sách hỗ trợ bảo hiểm tai nạn hoặc về bảo hiểm y tế, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(79, 'Chuẩn tin học quốc tế nâng cao', 'Chứng chỉ tin học IC3 hay MOS tốt hơn? Quy đổi điểm tin học đầu ra như thế nào?', 'UTH công nhận cả hai chứng chỉ quốc tế là MOS và IC3 để xét đạt chuẩn đầu ra Tin học. Đối với chứng chỉ MOS, sinh viên phải đạt từ 3 kỹ năng độc lập trở lên (gồm Word, Excel và Powerpoint). Đối với chứng chỉ IC3, sinh viên phải thi đạt cả 3 phần (Living Online, Key Applications, và Computing Fundamentals). Sinh viên mang chứng chỉ gốc đến Phòng Đào tạo để làm thủ tục hậu kiểm công nhận quy đổi. Bên cạnh đó, nếu bạn cũng quan tâm về cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH, hay về đăng ký thi lại chuẩn đầu ra, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(80, 'Quy định sử dụng mạng Wifi nội bộ của trường', 'Cách kết nối wifi trường UTH? Mật khẩu wifi sinh viên là gì? Tại sao không vào được wifi trường?', 'Nhà trường cấp hệ thống mạng Wifi miễn phí tại tất cả các khu vực giảng đường, thư viện và sân trường cho sinh viên. Để kết nối, sinh viên chọn mạng Wifi dành riêng cho người học, sau đó đăng nhập bằng Mã số sinh viên (Username) và Mật khẩu Portal cá nhân của mình. Hệ thống sẽ tự động chặn các truy cập vào trang web độc hại hoặc tải tài liệu lậu dung lượng quá lớn làm nghẽn băng thông. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về văn phòng khoa viện và về liên hệ ban quản lý ký túc xá — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-tin-truong'),
+(81, 'Đăng ký tham gia Câu lạc bộ (CLB) đầu năm học', 'Làm sao để vào câu lạc bộ của trường? Ngày hội các câu lạc bộ tổ chức khi nào? Tuyển thành viên CLB UTH?', 'Vào khoảng tháng 9 và tháng 10 hằng năm (đầu học kỳ 1), Hội Sinh viên trường UTH tổ chức Ngày hội các Câu lạc bộ (CLB Festival) tại sân trường cơ sở chính. Tại đây, tất cả các CLB (Học thuật, Nghệ thuật, Thể thao, Tình nguyện) sẽ đặt gian hàng giới thiệu và phát đơn tuyển thành viên mới trực tiếp hoặc trực tuyến qua các trang Fanpage chính thức của mình. Ngoài ra, nếu bạn còn thắc mắc về văn phòng đoàn thanh niên hoặc về sinh viên 5 tốt, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(82, 'Đăng ký cấp lại tài khoản Email sinh viên (@ut.edu.vn)', 'Làm sao để đổi mật khẩu email sinh viên? Bị mất email của trường xử lý thế nào?', 'Email sinh viên định dạng [MSSV]@ut.edu.vn được nhà trường cấp miễn phí cho toàn bộ người học để liên lạc và nhận các thông báo quan trọng. Nếu bị khóa tài khoản hoặc quên mật khẩu email, sinh viên mang Thẻ sinh viên đến trực tiếp văn phòng Trung tâm Dữ liệu và Công nghệ thông tin của trường tại khu nhà chức năng cơ sở chính để được hỗ trợ reset cấp lại mật khẩu ngay trong ngày. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về quên mật khẩu Portal, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(83, 'Hoạt động "Hiến máu tình nguyện" lần 2 trong năm', 'Một năm trường tổ chức hiến máu mấy lần? Lịch hiến máu đợt 2 của trường?', 'Nhằm đáp ứng nhu cầu cung cấp máu cứu người, Đoàn trường và Hội sinh viên UTH phối hợp tổ chức hoạt động hiến máu nhân đạo định kỳ 2 lần trong một năm học (thường rơi vào Học kỳ 1 và Học kỳ 2). Lịch chi tiết của từng đợt sẽ được đăng tải sớm trên trang Portal trước 1 tuần để sinh viên đăng ký tham gia và nhận quyền lợi cộng điểm rèn luyện. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về xuân tình nguyện và về mượn thiết bị âm thanh, sự kiện — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(84, 'Chế độ miễn giảm học phí cho con em diện chính sách', 'Con thương binh có được giảm học phí không? Thủ tục xin miễn học phí diện hộ nghèo? Nộp hồ sơ giảm học phí ở đâu?', 'Sinh viên thuộc diện con thương binh, bệnh binh, người có công với cách mạng, sinh viên dân tộc thiểu số vùng đặc biệt khó khăn, hoặc sinh viên thuộc hộ nghèo/hộ cận nghèo sẽ được hưởng chính sách miễn hoặc giảm học phí theo đúng quy định của Nhà nước. Sinh viên cần chuẩn bị Sổ hộ nghèo, Giấy chứng nhận diện chính sách bản công chứng nộp về Phòng Công tác sinh viên để xét duyệt đầu năm học. Ngoài ra, nếu bạn còn thắc mắc về đóng lệ phí thi lại hoặc về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/cong-thanh-toan'),
+(85, 'Quy định mượn học cụ, thiết bị tại phòng thí nghiệm', 'Làm sao để mượn đồ phòng thí nghiệm làm đồ án? Quy định mượn thiết bị đo đạc?', 'Sinh viên các ngành kỹ thuật (như Công trình, Điện - Điện tử, CNTT) cần mượn thiết bị, học cụ tại các phòng thí nghiệm, xưởng thực hành để làm đồ án hoặc bài tập lớn phải có Giấy đề xuất mượn thiết bị do Giảng viên hướng dẫn ký duyệt. Sinh viên nộp giấy này cho Cán bộ quản lý phòng thí nghiệm, xuất trình Thẻ sinh viên để ký sổ mượn và có trách nhiệm bảo quản, hoàn trả nguyên vẹn đúng thời hạn. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về liên hệ ban quản lý ký túc xá, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(86, 'Tiếp nhận hồ sơ Đăng ký xét tuyển Học bạ đợt tiếp theo', 'Khi nào trường nhận hồ sơ học bạ đợt 2? Cách nộp học bạ online vào trường UTH?', 'Hội đồng tuyển sinh UTH tổ chức xét tuyển học bạ THPT thành nhiều đợt trong năm. Thí sinh đăng ký nộp hồ sơ trực tuyến thông qua trang Tuyển sinh chính thức của trường, điền đầy đủ điểm số các môn thuộc tổ hợp xét tuyển và tải ảnh chụp học bạ lên hệ thống. Sau khi có kết quả trúng tuyển tạm thời, thí sinh phải nộp hồ sơ bản giấy về trường để đối chiếu xác thực thông tin. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên và về nguyện vọng bổ sung — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(87, 'Thủ tục xin tạm hoãn thi học kỳ', 'Bị ốm đột xuất không đi thi được làm sao? Cách xin hoãn thi học kỳ? Đơn xin hoãn thi nộp ở đâu?', 'Nếu gặp lý do bất khả kháng như tai nạn hoặc bệnh tật phải nằm viện điều trị ngay vào ngày thi kết thúc học phần, sinh viên phải làm Đơn xin hoãn thi kèm theo Giấy ra viện hoặc Giấy xác nhận có mộc tròn của bệnh viện nộp về Phòng Đào tạo trong vòng tối đa 3 ngày làm việc kể từ ngày thi của môn đó. Môn học xin hoãn thi thành công sẽ được chuyển điểm sang đợt thi bổ sung hoặc thi ghép cùng khóa sau mà không bị tính điểm 0. Ngoài ra, nếu bạn còn thắc mắc về cách tính điểm hoặc về bảo lưu kết quả, mình có thể hỗ trợ giải đáp thêm nhé.', '/lich-hoc-trong-tuan'),
+(88, 'Quy chế quản lý thông tin và tài sản số của sinh viên', 'Có được chia sẻ tài khoản Portal cho người khác không? Quy định bảo mật thông tin sinh viên UTH?', 'Theo quy định an ninh thông tin của UTH, tài khoản Portal và mật khẩu cá nhân là tài sản số độc quyền của cá nhân sinh viên đó. Sinh viên tuyệt đối không được chia sẻ tài khoản này cho bất kỳ ai khác. Mọi hành vi tự ý chia sẻ tài khoản dẫn đến việc sai lệch dữ liệu đăng ký môn học, kết quả học tập hoặc phát tán thông tin sai sự thật trên hệ thống sẽ bị xử lý kỷ luật nghiêm khắc từ mức cảnh cáo đến đình chỉ học tập. Bên cạnh đó, nếu bạn cũng quan tâm về phạt tiền thư viện, hay về khảo sát ý kiến sinh viên, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(89, 'Quy định tham quan kiến tập thực tế tại doanh nghiệp', 'Sinh viên năm mấy được đi kiến tập? Đi kiến tập doanh nghiệp có bắt buộc không?', 'Hoạt động tham quan kiến tập thực tế tại doanh nghiệp, nhà máy, cảng biển là một học phần bắt buộc hoặc hoạt động bổ trợ bổ ích được các Khoa/Viện tổ chức cho sinh viên (thường dành cho sinh viên năm 2 hoặc năm 3). Hoạt động này giúp sinh viên tiếp cận môi trường làm việc thực tế. Sinh viên tham gia phải tuân thủ nghiêm ngặt giờ giấc điều phối của giảng viên trưởng đoàn và mặc đồng phục trường lịch sự. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thủ tục chuyển ngành và về thời gian nhận bằng tốt nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(90, 'Tư vấn tâm lý và hỗ trợ sinh viên gặp áp lực học đường', 'Trường có phòng tư vấn tâm lý không? Bị stress áp lực học tập thì liên hệ ai hỗ trợ?', 'Nhằm hỗ trợ giải tỏa các áp lực về học tập, cuộc sống hoặc các vấn đề tâm lý cá nhân, UTH có Trung tâm Tư vấn tâm lý sinh viên trực thuộc Phòng Công tác sinh viên. Tại đây, các chuyên gia tâm lý sẽ lắng nghe, chia sẻ và tư vấn định hướng hoàn toàn miễn phí và bảo mật tuyệt đối thông tin cho sinh viên. Sinh viên có thể đặt lịch hẹn tư vấn trực tuyến qua trang hỗ trợ hoặc đến gặp trực tiếp tại văn phòng nhà A. Ngoài ra, nếu bạn còn thắc mắc về cấp lại bảng điểm hoặc về đăng ký cấp lại tài khoản email sinh viên, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(106, 'Rút hồ sơ thôi học', 'rut ho so, thoi hoc, xoa ten, khong hoc nua, xin thoi hoc, nghi hoc luon', 'Sinh viên muốn xin thôi học và rút hồ sơ gốc (Học bạ, Bằng tốt nghiệp THPT) phải làm đơn theo mẫu của trường, xin ý kiến xác nhận không nợ sách Thư viện, không nợ học phí, sau đó nộp về Phòng Đào tạo để ra quyết định xóa tên và trả lại hồ sơ. Bên cạnh đó, nếu bạn cũng quan tâm về chỉ tiêu tuyển sinh dự kiến năm 2026, hay về tiếp nhận hồ sơ đăng ký xét tuyển học bạ đợt tiếp theo, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(107, 'Đăng ký thi lại chuẩn đầu ra', 'thi lai anh van, thi lai tin hoc, nop don thi lai cdr, dang ky thi tieng anh', 'Trung tâm Ngoại ngữ và Trung tâm Tin học UTH tổ chức các đợt thi đánh giá chuẩn đầu ra định kỳ hằng tháng. Sinh viên theo dõi lịch thông báo, đăng ký và đóng lệ phí dự thi trực tuyến trên trang của Trung tâm trước ngày thi ít nhất 10 ngày. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chuẩn tin học quốc tế nâng cao và về cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(108, 'Xét giảm điểm rèn luyện', 'tru diem ren luyen, khieu nai drl, mo cong drl, cham lai drl, kieu nai drl', 'Nếu phát hiện điểm rèn luyện hiển thị trên Portal bị sai sót hoặc bị trừ điểm không rõ lý do, sinh viên làm đơn khiếu nại gửi Ban cán sự lớp và Cố vấn học tập trong thời gian 5 ngày kể từ khi công bố kết quả dự kiến để được kiểm tra, điều chỉnh. Ngoài ra, nếu bạn còn thắc mắc về thủ tục xin tạm hoãn thi học kỳ hoặc về cách tính điểm, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(109, 'Quy trình vay vốn ngân hàng', 'vay von ngan hang, giay xac nhan vay von, ngan hang chinh sach, don xin vay von', 'Sinh viên thuộc diện đối tượng được vay vốn tín dụng học tập mang hộ khẩu và minh chứng đối tượng đến Phòng Công tác sinh viên để xin cấp "Giấy xác nhận là sinh viên của trường". Sau đó mang giấy này về địa phương để làm thủ tục giải ngân tại Ngân hàng Chính sách Xã hội. Bên cạnh đó, nếu bạn cũng quan tâm về miễn giảm anh em ruột, hay về gia hạn học phí, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(110, 'Chính sách Học bổng tuyển sinh', 'hoc bong tuyen sinh, thu khoa, kien quoc, hoc bong dau vao, khuyen khich dau vao', 'UTH cấp học bổng toàn phần hoặc bán phần (miễn 50% - 100% học phí năm đầu) cho các tân sinh viên đạt danh hiệu Thủ khoa trường, Thủ khoa ngành, hoặc các thí sinh đạt điểm cao xuất sắc trong kỳ thi tốt nghiệp THPT và kỳ thi Đánh giá năng lực. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về đăng ký tham gia hiến máu đợt hè và về ngày hội sáng tạo — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(111, 'Thời gian giữ xe tối đa tại trường', 'gui xe qua dem, mat xe, quen lay xe, giu xe may, bai xe mo cua den may gio', 'Bãi giữ xe trường UTH mở cửa từ 6h00 đến 22h00 hằng ngày. Sinh viên không được để xe lại bãi qua đêm. Trường hợp xe bị hư hỏng bắt buộc phải để lại, sinh viên phải báo cáo và đăng ký thông tin với Đội bảo vệ trực ban của trường để được quản lý. Ngoài ra, nếu bạn còn thắc mắc về quy định sử dụng mạng wifi nội bộ của trường hoặc về liên hệ ban quản lý ký túc xá, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(112, 'Thủ tục phúc khảo điểm quá trình', 'phuc khao diem thanh phan, xem lai diem giua ky, diem qua trinh bi sai, sửa điểm', 'Điểm quá trình (điểm chuyên cần, bài tập, giữa kỳ) do Giảng viên bộ môn quản lý và công bố trên lớp. Nếu có thắc mắc, sinh viên phải phản hồi trực tiếp với Giảng viên trước khi môn học kết thúc. Khi điểm đã nộp về trường, giảng viên mới không thể tự ý chỉnh sửa. Bên cạnh đó, nếu bạn cũng quan tâm về học cải thiện, hay về đổi lịch thi học kỳ, cứ hỏi mình thêm nha.', '/ket-qua-hoc-tap'),
+(113, 'Tham gia hiến máu có được nghỉ học', 'hien mau co duoc nghi, xin nghi hoc hien mau, hoãn hoc hien mau', 'Sinh viên tham gia ngày hội hiến máu tình nguyện tổ chức tại trường sẽ được hỗ trợ cấp Giấy chứng nhận hiến máu. Giấy này được dùng làm minh chứng hợp lệ để xin phép nghỉ học có lý do đối với các tiết học diễn ra trong ngày hiến máu đó. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về xuân tình nguyện và về khảo sát ý kiến sinh viên — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/lich-hoc-trong-tuan'),
+(114, 'Đổi thẻ nhựa sang thẻ sinh viên', 'doi the nhua, lam the sinh vien moi, chip the sinh vien, tich hop the ngan hang', 'Hiện nay UTH triển khai cấp thẻ sinh viên tích hợp thẻ ngân hàng thông minh. Sinh viên năm nhất nhận thẻ theo lịch phân phối của phòng CTSV. Sinh viên khóa cũ có nhu cầu đổi phôi thẻ lỗi sang thẻ đa năng mới đăng ký và đóng phí tại văn phòng phòng CTSV. Ngoài ra, nếu bạn còn thắc mắc về khóa tài khoản Portal hoặc về phạt tiền thư viện, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(115, 'Hủy tư cách đoàn viên', 'xoa ten doan, rut so doan, khong sinh hoat doan, dong doan phi', 'Đoàn viên không tham gia sinh hoạt Đoàn hoặc không đóng đoàn phí liên tục trong 3 tháng mà không có lý do chính đáng sẽ bị xem xét xóa tên khỏi danh sách Đoàn viên và thông báo về Chi đoàn lớp sinh hoạt để trừ điểm rèn luyện theo quy chế. Bên cạnh đó, nếu bạn cũng quan tâm về nghiên cứu khoa học, hay về đồng phục & trang phục, cứ hỏi mình thêm nha.', '/thong-tin-ca-nhan'),
+(116, 'Chính sách hỗ trợ bảo hiểm tai nạn', 'bao hiem tai nan, bhtn, bi tai nan duoc den bao nhieu, ho tro nam vien', 'Ngoài BHYT bắt buộc, nhà trường có liên kết đơn vị bảo hiểm để sinh viên đăng ký tự nguyện Bảo hiểm tai nạn. Khi xảy ra sự cố chấn thương, nằm viện, sinh viên mang Giấy ra viện và hóa đơn chi phí đến Phòng Công tác sinh viên để làm thủ tục nhận tiền bảo hiểm bồi thường. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chính sách rút hồ sơ hoàn học phí đối với tân sinh viên và về lệ phí xét tuyển hồ sơ đầu vào — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(117, 'Mượn thiết bị âm thanh, sự kiện', 'muon loa keo, loa mic, thiet bi su kien, loa mic clb, thiet bi doan hoi', 'Các Câu lạc bộ, Chi đoàn lớp cần mượn loa kéo, micro, thiết bị âm thanh hoặc backdrop để tổ chức hoạt động phong trào phải làm đơn đăng ký thông qua Văn phòng Đoàn trường hoặc Phòng Quản trị thiết bị trước ngày diễn ra sự kiện ít nhất 3 ngày. Ngoài ra, nếu bạn còn thắc mắc về mất thẻ sinh viên hoặc về khóa tài khoản Portal, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(118, 'Cấp lại giấy chứng nhận quốc phòng', 'mat bang quan su, mat giay quoc phong, cap lai chung chi gdqp, xin bang diem gdqp', 'Chứng chỉ Giáo dục Quốc phòng - An ninh do Trung tâm GDQP cấp gốc 1 lần duy nhất. Nếu bị mất, sinh viên không được cấp lại bằng gốc mà phải làm đơn xin cấp Giấy xác nhận hoàn thành môn học hoặc bản sao bảng điểm trực tiếp tại Trung tâm quản lý để nộp xét tốt nghiệp. Bên cạnh đó, nếu bạn cũng quan tâm về giáo dục quốc phòng, hay về giáo dục thể chất, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(119, 'Đăng ký tham gia hiến máu đợt hè', 'hien mau mua he, hien mau hk he, lich hien mau thang 6 thang 7', 'Hoạt động hiến máu tình nguyện đợt hè thường được phối hợp tổ chức vào khoảng tháng 6 hoặc tháng 7 nhằm bổ sung nguồn máu dự trữ khan hiếm. Sinh viên học kỳ hè hoặc sinh viên ở lại thành phố đăng ký trực tuyến qua Fanpage Hội Sinh viên trường UTH. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về sinh hoạt công dân và về văn nghệ tiếng hát — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(120, 'Quy định số lần cảnh báo học vụ', 'bi canh bao may lan thi bi duoi, gioi han canh bao, canh bao hoc vu muc do 2', 'Theo quy chế học vụ UTH, sinh viên bị cảnh báo học vụ 2 lần liên tiếp sẽ bị buộc thôi học. Nếu bị cảnh báo rải rác không liên tiếp, sinh viên vẫn được tiếp tục học nhưng phải chủ động gặp Cố vấn học tập để làm cam kết lộ trình cải thiện điểm số. Ngoài ra, nếu bạn còn thắc mắc về điểm rèn luyện f hoặc về bảo lưu kết quả, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-ca-nhan'),
+(121, 'Thời hạn sử dụng của thẻ thư viện', 'gia han the thu vien, the thu vien het han, khoa the thu vien', 'Thẻ thư viện UTH (tích hợp trên Thẻ sinh viên) có giá trị sử dụng xuyên suốt toàn bộ khóa học chính quy của sinh viên tại trường. Tài khoản thư viện sẽ tự động bị khóa sau khi sinh viên nhận quyết định tốt nghiệp hoặc quyết định thôi học, ngừng học. Bên cạnh đó, nếu bạn cũng quan tâm về phạt tiền thư viện, hay về cấp lại bảng điểm, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(122, 'Thủ tục xin miễn học thể dục', 'mien hoc the duc, khong hoc the duc bi khuyet tat, don mien giao duc the chat, gay chan, chan thuong, tai nan, dau om', 'Sinh viên có khuyết tật, dị tật hoặc mắc các bệnh lý mãn tính không thể tham gia vận động mạnh phải làm đơn xin miễn/giảm học phần Giáo dục thể chất kèm theo Bệnh án, Giấy chứng nhận thương tật của bệnh viện cấp Quận trở lên nộp về Bộ môn GDTC để xét duyệt chuyển đổi môn học phù hợp. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về giáo dục quốc phòng và về cấp lại giấy chứng nhận quốc phòng — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dang-ky-hoc-phan'),
+(123, 'Thời gian nhận bằng tốt nghiệp', 'khi nao nhan bang goc, lay bang tot nghiep o dau, phat bang tot nghiep', 'Bằng tốt nghiệp chính thức được cấp phát cho sinh viên trong vòng 30 ngày kể từ ngày ký Quyết định công nhận tốt nghiệp. Sinh viên nhận bằng trực tiếp tại lễ tốt nghiệp hoặc đến văn phòng Phòng Đào tạo để ký sổ nhận bằng gốc (mang theo CCCD). Ngoài ra, nếu bạn còn thắc mắc về điều kiện tốt nghiệp hoặc về thực tập tốt nghiệp, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(124, 'Phí phạt nợ học phí quá hạn', 'nop tre hoc phi, nop phat hoc phi, tre han dong tien hoc bi phat bao nhieu', 'UTH không áp dụng hình thức phạt tiền mặt khi sinh viên nộp học phí trễ hạn. Tuy nhiên, sinh viên không hoàn thành học phí đúng thời gian quy định sẽ bị hệ thống tự động khóa tài khoản Portal, hủy danh sách đăng ký học phần và cấm tham gia kỳ thi học kỳ. Bên cạnh đó, nếu bạn cũng quan tâm về quy trình vay vốn ngân hàng, hay về bảo hiểm y tế, cứ hỏi mình thêm nha.', '/cong-thanh-toan'),
+(125, 'Xin hoãn đi thực tập tốt nghiệp', 'hoan thuc tap, don xin hoan thuc tap nam cuoi, doi lich di thuc tap', 'Sinh viên năm cuối vì lý do sức khỏe hoặc chưa tích lũy đủ các môn học điều kiện bắt buộc muốn xin hoãn học phần Thực tập tốt nghiệp phải làm đơn xin hoãn nộp về Văn phòng Khoa/Viện chủ quản trước khi danh sách phân công đơn vị thực tập được công bố. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về chương trình đào tạo và về thời gian nhận bằng tốt nghiệp — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(126, 'Chính sách hỗ trợ sinh viên nghèo', 'tro cap kho khan, ho tro sinh vien ngheo đột xuất, tro cap xa hoi', 'Sinh viên gặp tai nạn, thiên tai, hỏa hoạn hoặc gia đình gặp biến cố lớn đột xuất dẫn đến hoàn cảnh đặc biệt khó khăn làm đơn xin hỗ trợ gửi Phòng Công tác sinh viên. Nhà trường sẽ xem xét trích Quỹ hỗ trợ sinh viên để cấp kinh phí trợ cấp đột xuất. Ngoài ra, nếu bạn còn thắc mắc về đóng lệ phí thi lại hoặc về chế độ miễn giảm học phí cho con em diện chính sách, mình có thể hỗ trợ giải đáp thêm nhé.', '/dich-vu-sinh-vien'),
+(127, 'Đồ án tốt nghiệp đạt điểm F xử lý sao', 'rot do an tot nghiep, lam lai khoa luan, rot khoa luan ra truong', 'Sinh viên bảo vệ Đồ án hoặc Khóa luận tốt nghiệp nhận điểm F (không đạt) sẽ không được tốt nghiệp đúng hạn. Sinh viên bắt buộc phải đăng ký làm lại đề tài mới hoặc đăng ký lại học phần đồ án vào kỳ xét duyệt tiếp theo của năm học sau và đóng phí theo quy định. Bên cạnh đó, nếu bạn cũng quan tâm về thời gian nhận bằng tốt nghiệp, hay về chương trình đào tạo, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(128, 'Quy chế xét học bổng khi nợ môn', 'no mon co duoc hoc bong, rot mon co duoc xet hoc bong, thi lai co duoc hoc bong', 'Theo quy chế khen thưởng của UTH, sinh viên chỉ cần nợ 1 môn học (nhận điểm F) hoặc đăng ký thi lại/học lại bất kỳ môn nào trong học kỳ đó thì sẽ lập tức bị tước quyền tham gia xét duyệt Học bổng khuyến khích học tập, bất kể điểm GPA tổng của bạn cao bao nhiêu. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về học bổng doanh nghiệp và về học bổng liên kết — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(129, 'Liên hệ Ban quản lý ký túc xá', 'so dien thoai ban quan ly ktx, gap ai de phan anh ktx, ban quan ly noi tru', 'Để phản ánh các vấn đề về điện nước, an ninh phòng ở hoặc nộp chi phí nội trú Ký túc xá, sinh viên đến trực tiếp văn phòng Ban quản lý nội trú Ký túc xá đặt tại khu vực cổng vào của khu nội trú cơ sở đó để được cán bộ trực ban giải quyết. Ngoài ra, nếu bạn còn thắc mắc về đồng phục & trang phục hoặc về quy định mượn học cụ, thiết bị tại phòng thí nghiệm, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(131, 'Phương thức tuyển sinh năm 2026 của UTH', 'phương thức tuyển sinh 2026, phuong thuc tuyen sinh 2026, uth xet tuyen cach nao, xet hoc ba 2026, diem thi thpt 2026', 'Năm 2026, UTH tuyển sinh đại học chính quy theo 2 phương thức: (1) Xét tuyển thẳng theo quy định của Bộ GD&ĐT và theo Đề án riêng của UTH (thí sinh đạt giải HSG cấp Tỉnh/Thành trở lên; có chứng chỉ tiếng Anh quốc tế từ IELTS 6.0, TOEFL iBT 60, TOEIC 600 hoặc Bậc 4/6 trở lên; học sinh trường chuyên/trọng điểm; đạt học lực Giỏi nhiều học kỳ; thuộc nhóm ngành ưu tiên nhà nước như đường sắt tốc độ cao, CNTT, trí tuệ nhân tạo; hoặc có thư giới thiệu từ doanh nghiệp đối tác của UTH); (2) Xét tuyển kết hợp - phương thức chủ đạo, chiếm phần lớn chỉ tiêu, tính điểm theo công thức riêng của trường (UTH120), kết hợp điểm thi Đánh giá năng lực (nếu có), điểm học bạ cả năm lớp 12, điểm thi tốt nghiệp THPT năm 2026 và điểm ưu tiên/điểm khuyến khích theo quy định. Từ năm 2025, UTH không còn xét tuyển riêng lẻ theo điểm thi THPT hay điểm học bạ như các năm trước đó; các loại điểm này chỉ là thành phần trong công thức xét tuyển kết hợp chung. Chương trình đào tạo được thiết kế 120 tín chỉ, thời gian học tối thiểu 3 năm. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về thời gian công bố kết quả trúng tuyển chính thức và về đăng ký nguyện vọng vào UTH trên hệ thống của bộ GD&ĐT — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/thong-bao-su-kien'),
+(132, 'Các tổ hợp môn xét tuyển phổ biến tại UTH', 'tổ hợp môn xét tuyển, to hop mon xet tuyen, khoi thi vao uth, khoi a00 a01 d01 d07, uth xet khoi nao', 'Trong công thức xét tuyển kết hợp của UTH, điểm xét tuyển được tính từ 3 môn theo tổ hợp đăng ký (các tổ hợp phổ biến nhiều năm qua gồm A00: Toán - Lý - Hóa; A01: Toán - Lý - Anh; D01: Toán - Văn - Anh; D07: Toán - Hóa - Anh), sau đó tổng hợp cùng điểm học bạ, điểm thi THPT và điểm thi Đánh giá năng lực (nếu có) theo công thức và trọng số riêng của từng năm tuyển sinh. Công nghệ thông tin và Logistics - Quản lý chuỗi cung ứng tiếp tục là các nhóm ngành có chỉ tiêu lớn và mức độ cạnh tranh cao nhất trường. Vì tổ hợp và công thức tính điểm cụ thể có thể thay đổi theo từng ngành và từng năm, thí sinh nên tra cứu Đề án tuyển sinh chính thức hằng năm tại tuyensinh.ut.edu.vn để có thông tin chính xác nhất. Ngoài ra, nếu bạn còn thắc mắc về thủ tục xác nhận nhập học trực tuyến hoặc về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học, mình có thể hỗ trợ giải đáp thêm nhé.', '/chuong-trinh-khung'),
+(133, 'Điểm chuẩn ngành Công nghệ thông tin (CNTT) năm 2025', 'điểm chuẩn cntt 2025, diem chuan cong nghe thong tin 2025, nganh cntt uth bao nhieu diem, diem trung tuyen cntt', 'Năm 2025, UTH xét tuyển theo phương thức Xét tuyển kết hợp với thang điểm riêng của trường (không phải thang 30 quen thuộc, mà dao động 668-999 điểm tùy ngành). Điểm chuẩn trúng tuyển các chuyên ngành thuộc nhóm Công nghệ thông tin, công bố ngày 22/8/2025, như sau: CNTT (chuyên ngành CNTT, chương trình tiên tiến): 800 điểm; CNTT chuyên ngành Khoa học dữ liệu và AI (chương trình tiên tiến): 800 điểm; CNTT chương trình hoàn toàn bằng tiếng Anh: 800 điểm; CNTT chuyên ngành Truyền thông số và Đổi mới sáng tạo: 720 điểm; CNTT chuyên ngành Smart Logistics: 720 điểm; CNTT chuyên ngành Công nghệ ô tô số: 800 điểm. Lưu ý: mức điểm này tính theo công thức riêng của UTH (kết hợp điểm học bạ, điểm thi THPT, điểm Đánh giá năng lực và điểm ưu tiên) nên KHÔNG thể so sánh trực tiếp với điểm chuẩn thang 30 của các trường xét điểm thi THPT truyền thống. Bên cạnh đó, nếu bạn cũng quan tâm về chỉ tiêu tuyển sinh dự kiến năm 2026, hay về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học, cứ hỏi mình thêm nha.', '/chuong-trinh-khung'),
+(134, 'Điểm chuẩn ngành Logistics và Quản lý chuỗi cung ứng năm 2025', 'điểm chuẩn logistics 2025, diem chuan logistics 2025, nganh logistics lay bao nhieu diem, diem xet tuyen logistics', 'Logistics và Quản lý chuỗi cung ứng tiếp tục là một trong những ngành có điểm chuẩn cao nhất UTH. Theo điểm chuẩn chính thức công bố ngày 22/8/2025 (phương thức Xét tuyển kết hợp, thang điểm riêng của trường, KHÔNG phải thang 30): Logistics và Quản lý chuỗi cung ứng - chương trình tiên tiến: 963 điểm (chỉ xếp sau ngành Khoa học dữ liệu - chương trình tiên tiến với 999 điểm, cao nhất toàn trường); Logistics và Quản lý chuỗi cung ứng - chương trình hoàn toàn bằng tiếng Anh: 720 điểm. Đây tiếp tục là ngành có mức độ cạnh tranh rất cao tại UTH trong nhiều năm liền. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về rút hồ sơ thôi học và về điểm sàn nhận hồ sơ xét tuyển — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/chuong-trinh-khung'),
+(135, 'Điểm chuẩn tổng hợp tất cả các ngành năm 2025', 'điểm chuẩn 2025, diem chuan 2025, điểm chuẩn tất cả các ngành uth, diem chuan tat ca cac nganh, điểm chuẩn uth 2025 mới nhất, điểm chuẩn năm 2025 bao nhiêu, xet tuyen ket hop 2025, diem chuan hoc ba 2025', 'UTH công bố điểm chuẩn chính thức hệ đại học chính quy năm 2025 vào ngày 22/8/2025, theo phương thức Xét tuyển kết hợp (thang điểm riêng của trường, KHÔNG phải thang 30 truyền thống), dao động từ 668 đến 999 điểm tùy ngành/chuyên ngành. Một số mức điểm chuẩn tiêu biểu: Khoa học dữ liệu (chương trình tiên tiến) 999 điểm - cao nhất toàn trường; Logistics và Quản lý chuỗi cung ứng (chương trình tiên tiến) 963 điểm; Kỹ thuật điện (chuyên ngành Điện công nghiệp, Hệ thống điện giao thông, Năng lượng tái tạo) 936 điểm; Công nghệ kỹ thuật điều khiển và tự động hóa (chương trình tiên tiến) 931 điểm. Nhóm ngành phổ biến ở mức 720-800 điểm gồm: Công nghệ thông tin, Ngôn ngữ Anh, Luật, Quản trị kinh doanh, Hệ thống thông tin quản lý, Kỹ thuật cơ khí, Kỹ thuật ô tô, Kinh tế xây dựng, Khai thác vận tải, Kinh tế vận tải (đa số thuộc chương trình tiên tiến). Nhóm có điểm sàn thấp nhất (668 điểm) gồm các chương trình chuẩn (không phải tiên tiến) như Kỹ thuật tàu thủy, Kỹ thuật xây dựng công trình thủy, Khoa học hàng hải và các ngành liên quan đường sắt tốc độ cao. Lưu ý quan trọng: mức điểm 2025 tính theo công thức riêng của UTH (kết hợp điểm học bạ lớp 12, điểm thi THPT, điểm thi Đánh giá năng lực và điểm ưu tiên), nên KHÔNG thể so sánh trực tiếp với điểm chuẩn thang 30 của các trường xét điểm thi THPT truyền thống. Trường có hơn 50 ngành/chuyên ngành/chương trình đào tạo khác nhau, mỗi ngành có mức điểm riêng; thí sinh nên tra cứu bảng điểm chuẩn đầy đủ theo từng mã ngành tại tuyensinh.ut.edu.vn hoặc liên hệ Phòng Đào tạo để được tư vấn chính xác. Ngoài ra, nếu bạn còn thắc mắc về phương thức tuyển sinh năm 2026 của UTH hoặc về tiếp nhận hồ sơ đăng ký xét tuyển học bạ đợt tiếp theo, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(136, 'Chỉ tiêu tuyển sinh dự kiến năm 2026', 'chỉ tiêu tuyển sinh 2026, chi tieu tuyen sinh 2026, uth tuyen bao nhieu sinh vien, chi tieu nganh cntt 2026', 'UTH công bố Đề án tuyển sinh đại học chính quy năm 2026 vào ngày 16/6/2026, với hơn 50 ngành/chuyên ngành đào tạo, mở rộng thêm nhiều chuyên ngành mới gắn với công nghệ số như: Khoa học dữ liệu - Blockchain và AI, Smart Logistics, Công nghệ ô tô số, Kinh tế số và Trí tuệ nhân tạo, Truyền thông số và Đổi mới sáng tạo, Logistics xanh và phát triển bền vững, Quản lý và công nghệ UAV... Chỉ tiêu cụ thể được phân bổ chi tiết theo từng mã ngành trong Đề án tuyển sinh chính thức chứ không phải một con số tổng cố định, và có thể thay đổi theo từng năm. Thí sinh nên tra cứu chỉ tiêu cụ thể theo từng mã ngành tại Đề án tuyển sinh 2026 chính thức đăng trên tuyensinh.ut.edu.vn thay vì dựa vào số liệu ước tính. Bên cạnh đó, nếu bạn cũng quan tâm về điểm chuẩn ngành công nghệ thông tin, hay về thủ tục xác nhận nhập học trực tuyến, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
+(137, 'Cách sử dụng chứng chỉ IELTS trong tuyển sinh và học tập tại UTH', 'quy đổi điểm ielts, quy doi diem ielts tuyen sinh, ielts 5.5 duoc may diem, cong diem ielts vao uth', 'UTH không áp dụng một bảng quy đổi điểm IELTS sang thang điểm xét tuyển cố định. Chứng chỉ tiếng Anh quốc tế được UTH sử dụng theo 2 cách: (1) Trong xét tuyển đầu vào: thí sinh có chứng chỉ IELTS từ 6.0 trở lên (hoặc TOEFL iBT từ 60, TOEFL ITP từ 530, TOEIC từ 600, Bậc 4 theo Khung năng lực ngoại ngữ 6 bậc dùng cho Việt Nam trở lên, còn hiệu lực) có thể dùng làm một trong các tiêu chí để đăng ký diện Xét tuyển thẳng theo Đề án riêng của UTH; (2) Sau khi nhập học: sinh viên nộp chứng chỉ IELTS hoặc chứng chỉ ngoại ngữ tương đương để trường xét miễn các cấp độ học phần tiếng Anh tương ứng với năng lực (miễn đến cấp độ nào thì được miễn học phí cấp độ đó), nộp hồ sơ trực tuyến qua support.ut.edu.vn (mục Phòng Đào tạo/Chuẩn đào tạo ngoại ngữ UTH). Vì điều kiện cụ thể có thể điều chỉnh theo từng năm, sinh viên nên tra cứu Đề án tuyển sinh hoặc thông báo chính thức mới nhất của UTH. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về điểm chuẩn ngành logistics và quản lý chuỗi cung ứng năm 2025 và về điểm sàn nhận hồ sơ xét tuyển — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(138, 'Điểm sàn nhận hồ sơ xét tuyển (Ngưỡng đảm bảo chất lượng)', 'điểm sàn uth, diem san nhan ho so, bao nhieu diem thi duoc nop don, diem san 2025 2026', 'Từ năm 2025, UTH chuyển sang phương thức Xét tuyển kết hợp làm phương thức tuyển sinh chủ đạo (tính điểm theo công thức riêng của trường, kết hợp điểm học bạ, điểm thi THPT và điểm thi Đánh giá năng lực), nên khái niệm "điểm sàn" theo thang 30 truyền thống không còn áp dụng thống nhất cho toàn trường như các năm trước 2025. Điều kiện đầu vào tối thiểu của phương thức xét tuyển kết hợp hiện nay là thí sinh phải có điểm thi môn Toán trong kỳ thi tốt nghiệp THPT từ 5.0 trở lên (một số ngành yêu cầu cao hơn, ví dụ ngành Toán ứng dụng yêu cầu từ 6.0), cùng với ngưỡng đảm bảo chất lượng cụ thể theo từng ngành được quy định riêng trong Đề án tuyển sinh của từng năm. Thí sinh cần tra cứu Đề án tuyển sinh chính thức mới nhất tại tuyensinh.ut.edu.vn để biết điều kiện đăng ký xét tuyển áp dụng cho ngành mình quan tâm. Ngoài ra, nếu bạn còn thắc mắc về đăng ký nguyện vọng vào UTH trên hệ thống của bộ GD&ĐT hoặc về lệ phí xét tuyển hồ sơ đầu vào, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(139, 'Đăng ký nguyện vọng vào UTH trên hệ thống của Bộ GD&ĐT', 'đăng ký nguyện vọng, dang ky nguyen vong, ma truong uth la gi, xep nguyen vong vao uth', 'Để xét tuyển vào UTH bằng điểm thi THPT, thí sinh phải đăng ký nguyện vọng trên hệ thống chung của Bộ GD&ĐT theo đúng lịch quy định. Thí sinh cần nhập chính xác Mã trường của UTH là GTS và chọn đúng mã ngành, mã tổ hợp môn mong muốn. Nên xếp ngành yêu thích nhất ở Nguyện vọng 1. Bên cạnh đó, nếu bạn cũng quan tâm về điểm chuẩn ngành logistics và quản lý chuỗi cung ứng năm 2025, hay về lệ phí xét tuyển hồ sơ đầu vào, cứ hỏi mình thêm nha.', '/thong-bao-su-kien'),
+(140, 'Lệ phí xét tuyển hồ sơ đầu vào', 'lệ phí xét tuyển, le phi xet tuyen, nop tien xet hoc ba bao nhieu, dong tien nguyen vong', 'Lệ phí xét tuyển đối với phương thức xét học bạ nộp trực tiếp về trường UTH áp dụng theo quy định hành chính thu chi. Đối với phương thức xét điểm thi THPT, thí sinh đóng lệ phí trực tuyến trực tiếp trên hệ thống cổng thông tin của Bộ GD&ĐT khi tiến hành xác nhận số lượng nguyện vọng. Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về học phí trường và về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/cong-thanh-toan'),
+(141, 'Thời gian công bố kết quả trúng tuyển chính thức', 'khi nào biết kết quả trúng tuyển, khi nao biet ket qua trung tuyen, lich cong bo diem chuan uth', 'Thời gian công bố điểm chuẩn và danh sách trúng tuyển chính thức của UTH tuân thủ nghiêm ngặt theo lộ trình chung của Bộ GD&ĐT (thường vào khoảng tháng 8 hằng năm). Kết quả xét tuyển sớm bằng học bạ thường được trường thông báo trước đó vào tháng 6 hoặc tháng 7. Ngoài ra, nếu bạn còn thắc mắc về điểm chuẩn ngành logistics và quản lý chuỗi cung ứng năm 2025 hoặc về hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-bao-su-kien'),
+(142, 'Thủ tục xác nhận nhập học trực tuyến', 'xác nhận nhập học, xac nhan nhap hoc online, huong dan nhap hoc uth, khong xac nhan nhap hoc bi gi', 'Sau khi có thông báo trúng tuyển chính thức, thí sinh bắt buộc phải thực hiện bước Xác nhận nhập học trực tuyến trên hệ thống của Bộ GD&ĐT trước thời hạn quy định. Thí sinh cố tình không xác nhận nhập học đúng hạn sẽ bị hệ thống tự động hủy kết quả trúng tuyển vào trường. Bên cạnh đó, nếu bạn cũng quan tâm về các tổ hợp môn xét tuyển phổ biến tại UTH, hay về phương thức tuyển sinh năm 2026 của UTH, cứ hỏi mình thêm nha.', '/dich-vu-sinh-vien'),
+(143, 'Hồ sơ bản giấy cần chuẩn bị khi đến trường làm thủ tục nhập học', 'hồ sơ nhập học cần gì, ho so nhap hoc can gi, mang theo gi khi nhap hoc uth, giay to nhap hoc', 'Hồ sơ nhập học bản giấy nộp tại trường bao gồm: Giấy báo trúng tuyển bản gốc; Học bạ THPT (bản sao công chứng); Giấy chứng nhận tốt nghiệp tạm thời hoặc Bằng tốt nghiệp THPT; Bản sao CCCD; Giấy khai sinh; và các giấy tờ minh chứng đối tượng ưu tiên chính sách (nếu có). Nhân tiện, các bạn sinh viên cũng hay hỏi thêm về quy trình làm thủ tục nhập học trực tiếp tại trường và về rút hồ sơ thôi học — nếu cần, bạn cứ đặt câu hỏi cho mình nhé.', '/dich-vu-sinh-vien'),
+(144, 'Quy trình làm thủ tục nhập học trực tiếp tại trường', 'quy trình nhập học trực tiếp, quy trinh nhap hoc truc tiep, den truong nhap hoc o dau, huong dan tan sinh vien', 'Khi đến nhập học trực tiếp tại cơ sở chính của UTH, tân sinh viên thực hiện theo quy trình luồng: - Tra cứu số thứ tự và phòng làm thủ tục tại sảnh hướng dẫn. - Nộp hồ sơ bản giấy tại bàn tiếp nhận của Khoa/Viện. - Đóng học phí và các khoản bảo hiểm bắt buộc tại bàn tài chính. - Nhận lịch học Tuần sinh hoạt công dân và chụp ảnh làm Thẻ sinh viên. Ngoài ra, nếu bạn còn thắc mắc về thời gian nhận bằng tốt nghiệp hoặc về điều kiện tốt nghiệp, mình có thể hỗ trợ giải đáp thêm nhé.', '/thong-tin-truong'),
+(145, 'Chính sách rút hồ sơ hoàn học phí đối với tân sinh viên', 'rút học phí nhập học, rut hoc phi nhap hoc, nhap hoc roi xin rut lai tien, thoi hoc rut lai hoc phi', 'Tân sinh viên đã làm thủ tục nhập học nhưng vì lý do cá nhân muốn xin rút hồ sơ không theo học nữa sẽ được xem xét hoàn trả học phí tùy theo thời điểm nộp đơn. Nếu nộp đơn rút trước ngày khai giảng chính thức, sinh viên được hoàn lại một phần học phí theo quy định đóng rút bồi hoàn của nhà trường; sau ngày khai giảng sẽ không được hoàn phí. Bên cạnh đó, nếu bạn cũng quan tâm về chính sách hỗ trợ sinh viên nghèo, hay về quy trình vay vốn ngân hàng, cứ hỏi mình thêm nha.', '/cong-thanh-toan');
+
+DROP TABLE IF EXISTS `tickets`;
+CREATE TABLE `tickets` (
+  `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  `student_name` VARCHAR(255) NOT NULL,
+  `mssv` VARCHAR(50) NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `content` TEXT NOT NULL,
+  `status` VARCHAR(50) NOT NULL DEFAULT 'pending',
+  `admin_reply` TEXT DEFAULT NULL,
+  `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT INTO `tickets` (`student_name`, `mssv`, `title`, `content`, `status`, `admin_reply`, `created_at`) VALUES
+('Phạm Anh Tuấn', '075205019210', 'Hỗ trợ về: Học phí hệ chất lượng cao...', 'Cho em hỏi học phí chất lượng cao học kỳ hè tính như thế nào ạ? Có giống học kỳ chính không?', 'pending', NULL, NOW() - INTERVAL 2 HOUR),
+('Phạm Anh Tuấn', '075205019210', 'Hỗ trợ về: Cách tính điểm rèn luyện...', 'Thưa thầy cô, em tham gia hiến máu tình nguyện thì được cộng bao nhiêu điểm rèn luyện và nộp minh chứng ở đâu ạ?', 'replied', 'Chào em, hiến máu tình nguyện được cộng 5 điểm rèn luyện. Em nộp minh chứng trực tuyến trên Portal sinh viên nhé.', NOW() - INTERVAL 1 DAY);
+
+SET FOREIGN_KEY_CHECKS=1;
+
+
+-- --- START OF FILE: fix_users.sql --- 
+
+USE do_an_udpm;
+
+-- Delete if exists
+DELETE FROM users WHERE username IN ('admin', '075205019210');
+
+-- Insert admin (admin123)
+INSERT INTO users (username, email, password_hash, role_id, full_name, status, created_at, updated_at)
+VALUES ('admin', 'admin@ut.edu.vn', '$2y$12$3M7KKuHVwqedzfDCECxT0e1SkMFE7YW3JVH4Ylr5x5zMfCiiP1d0K', 2, 'Ban Quản Trị UTH', 'active', NOW(), NOW());
+
+-- Insert student (sv123)
+INSERT INTO users (username, email, password_hash, role_id, full_name, status, created_at, updated_at)
+VALUES ('075205019210', '075205019210@student.ut.edu.vn', '$2y$12$piGoVROmAihFzRzx3BQ9.uKIgo.bIGfYmrYdPYTYWrV5a0GN/EZSu', 1, 'Phạm Anh Tuấn', 'active', NOW(), NOW());
+
+SET @student_user_id = LAST_INSERT_ID();
+
+-- Insert student profile
+INSERT INTO student_profiles (user_id, student_code, cohort_year, class_code, date_of_birth, gender, place_of_birth, academic_status, created_at, updated_at)
+VALUES (@student_user_id, '075205019210', 2023, 'CNTT2023', '2005-06-07', 'male', 'Đồng Tháp', 'studying', NOW(), NOW());
+
+
+-- --- START OF FILE: seed_student.sql --- 
+
+-- Check if user already inserted
+DELETE FROM users WHERE username = '075205019210';
+INSERT INTO users (username, email, password_hash, role_id, full_name, status, created_at, updated_at)
+VALUES ('075205019210', '075205019210@student.ut.edu.vn', 'password_hash_dummy', 3, 'Phạm Anh Tuấn', 'active', NOW(), NOW());
+
+SET @user_id = LAST_INSERT_ID();
+
+INSERT INTO student_profiles (user_id, student_code, cohort_year, class_code, date_of_birth, gender, place_of_birth, academic_status, created_at, updated_at)
+VALUES (@user_id, '075205019210', 2023, 'CNTT2023', '2005-06-07', 'male', 'Đồng Tháp', 'studying', NOW(), NOW());
+
+SET @student_id = LAST_INSERT_ID();
+
+INSERT INTO subjects (code, name, credits) VALUES 
+('LTTBDD', 'Lập trình thiết bị di động', 3),
+('TMDT', 'Thương mại điện tử', 3),
+('LTM', 'Lập trình mạng', 3),
+('LSDCSVN', 'Lịch sử Đảng cộng sản Việt Nam', 2)
+ON DUPLICATE KEY UPDATE id=id;
+
+INSERT INTO academic_years (code, start_date, end_date) VALUES ('2025-2026', '2025-08-01', '2026-07-31') ON DUPLICATE KEY UPDATE id=id;
+SET @ay_id = (SELECT id FROM academic_years WHERE code = '2025-2026' LIMIT 1);
+
+INSERT INTO semesters (academic_year_id, code, name, start_date, end_date) VALUES (@ay_id, 'HK3', 'Học kỳ hè', '2026-06-01', '2026-07-31') ON DUPLICATE KEY UPDATE id=id;
+SET @sem_id = (SELECT id FROM semesters WHERE code = 'HK3' LIMIT 1);
+
+-- Sections
+INSERT INTO course_sections (subject_id, semester_id, section_code, lecturer_name) VALUES 
+((SELECT id FROM subjects WHERE code = 'LTTBDD' LIMIT 1), @sem_id, 'LTTBDD_01', 'GV Nguyễn Văn A'),
+((SELECT id FROM subjects WHERE code = 'TMDT' LIMIT 1), @sem_id, 'TMDT_01', 'GV Trần Thị B'),
+((SELECT id FROM subjects WHERE code = 'LTM' LIMIT 1), @sem_id, 'LTM_01', 'GV Lê Văn C'),
+((SELECT id FROM subjects WHERE code = 'LSDCSVN' LIMIT 1), @sem_id, 'LSDCSVN_01', 'GV Phạm Thị D');
+
+-- Sessions
+INSERT INTO class_schedule_sessions (course_section_id, day_of_week, start_time, end_time, room, campus) VALUES 
+((SELECT id FROM course_sections WHERE section_code = 'LTTBDD_01' LIMIT 1), 2, '07:30:00', '10:00:00', 'Phòng F101', 'Cơ sở 1'),
+((SELECT id FROM course_sections WHERE section_code = 'TMDT_01' LIMIT 1), 2, '13:00:00', '15:30:00', 'Phòng B202', 'Cơ sở 1'),
+((SELECT id FROM course_sections WHERE section_code = 'LTM_01' LIMIT 1), 3, '07:30:00', '10:00:00', 'Phòng D103', 'Cơ sở 1'),
+((SELECT id FROM course_sections WHERE section_code = 'LSDCSVN_01' LIMIT 1), 4, '07:30:00', '11:00:00', 'HT A', 'Cơ sở 1');
+
+-- Enrollments
+INSERT INTO enrollments (student_id, course_section_id, enrollment_status) VALUES 
+(@student_id, (SELECT id FROM course_sections WHERE section_code = 'LTTBDD_01' LIMIT 1), 'studying'),
+(@student_id, (SELECT id FROM course_sections WHERE section_code = 'TMDT_01' LIMIT 1), 'studying'),
+(@student_id, (SELECT id FROM course_sections WHERE section_code = 'LTM_01' LIMIT 1), 'studying'),
+(@student_id, (SELECT id FROM course_sections WHERE section_code = 'LSDCSVN_01' LIMIT 1), 'studying');
+
