@@ -52,6 +52,52 @@ function examTypeLabelVi(?string $type): string {
     };
 }
 
+function isPersonalScopedQuestion(string $norm): bool {
+    return appContainsAny($norm, [
+        'cua toi', 'cua minh', 'cua em', 'cua tui',
+        'toi dang', 'minh dang', 'em dang', 'tui dang',
+        'toi hoc', 'minh hoc', 'em hoc', 'tui hoc',
+        'toi thi', 'minh thi', 'em thi', 'tui thi',
+        'toi co', 'minh co', 'em co', 'tui co',
+        'toi con no', 'minh con no', 'em con no', 'tui con no',
+        'mssv cua toi', 'mssv cua minh', 'ma so cua toi', 'ma so cua minh',
+        'bang diem cua toi', 'bang diem cua minh', 'diem cua toi', 'diem cua minh',
+        'lich hoc cua toi', 'lich hoc cua minh', 'lich thi cua toi', 'lich thi cua minh',
+        'hoc phi cua toi', 'hoc phi cua minh', 'cong no cua toi', 'cong no cua minh',
+    ]);
+}
+
+function isGeneralKnowledgeScopedQuestion(string $norm): bool {
+    return appContainsAny($norm, [
+        'truong', 'uth', 'toan truong', 'nha truong',
+        'quy dinh', 'quy che', 'chinh sach', 'thu tuc', 'huong dan',
+        'danh sach', 'tat ca', 'cac nganh', 'nganh dao tao',
+        'tuyen sinh', 'diem chuan', 'diem san', 'chuong trinh dao tao',
+        'nam hoc', 'khoa 20', 'tin chi', 'mot tin', 'muc thu', 'bang hoc phi',
+        'dai tra', 'tien tien', 'chat luong cao',
+        'lich dang ky', 'deadline', 'thong bao',
+    ]) || preg_match('/\b20\d{2}\b/u', $norm);
+}
+
+function questionIntroducesNewKnowledgeTopic(string $norm): bool {
+    if (appContainsAny($norm, [
+        'nganh dao tao', 'cac nganh', 'danh sach nganh', 'truong co nganh',
+        'hoc phi truong', 'hoc phi uth', 'hoc phi nha truong', 'muc hoc phi',
+        'bang hoc phi', 'hoc phi nam', 'hoc phi khoa', 'hoc phi tin chi',
+        'quy dinh', 'quy che', 'chinh sach', 'thu tuc', 'huong dan',
+        'dang ky hoc phan', 'mien giam', 'tuyen sinh', 'diem chuan',
+        'diem ren luyen', 'lich dang ky', 'thong bao', 'deadline',
+    ])) {
+        return true;
+    }
+
+    return appContainsAny($norm, ['hoc phi', 'tien hoc'])
+        && appContainsAny($norm, [
+            'truong', 'uth', 'nha truong', 'chung', 'nam hoc', 'khoa',
+            'tin chi', 'quy dinh', 'muc thu', 'bao nhieu',
+        ]);
+}
+
 function detectEntities(string $message, ?array $student): array {
     $norm = appNormalizeText($message);
     $entities = [
@@ -81,7 +127,9 @@ function detectEntities(string $message, ?array $student): array {
 
     if (preg_match('/khoa\s*(20\d{2})/u', $norm, $m)) {
         $entities['cohort_year'] = (int)$m[1];
-    } elseif (!empty($student['cohort_year'])) {
+    } elseif (!empty($student['cohort_year']) && appContainsAny($norm, [
+        'khoa cua toi', 'khoa cua minh', 'khoa cua em', 'khoa minh', 'khoa toi',
+    ])) {
         $entities['cohort_year'] = (int)$student['cohort_year'];
     }
 
@@ -98,6 +146,8 @@ function detectEntities(string $message, ?array $student): array {
 
 function classifyQuestion(string $message): array {
     $norm = appNormalizeText($message);
+    $isPersonalScope = isPersonalScopedQuestion($norm);
+    $isGeneralScope = isGeneralKnowledgeScopedQuestion($norm);
 
     if (appContainsAny($norm, [
         'tao ticket', 'gui ticket', 'ticket ho tro', 'gui yeu cau ho tro',
@@ -146,12 +196,15 @@ function classifyQuestion(string $message): array {
         return ['class' => 'portal_navigation', 'intent' => 'nav_payment'];
     }
 
-    if (appContainsAny($norm, ['lich thi', 'phong thi', 'ca thi', 'ngay thi'])) {
+    if (appContainsAny($norm, ['lich thi', 'phong thi', 'ca thi', 'ngay thi']) && (!$isGeneralScope || $isPersonalScope)) {
         return ['class' => 'du_lieu_ca_nhan_sinh_vien', 'intent' => 'personal_exams'];
     }
 
     if (
-        appContainsAny($norm, ['lich hoc', 'thoi khoa bieu', 'hom nay hoc', 'ngay mai hoc', 'phong hoc', 'ca hoc'])
+        (
+            appContainsAny($norm, ['lich hoc', 'thoi khoa bieu', 'hom nay hoc', 'ngay mai hoc', 'phong hoc', 'ca hoc'])
+            && (!$isGeneralScope || $isPersonalScope)
+        )
         || (
             appContainsAny($norm, ['hom nay', 'ngay mai', 'tuan nay'])
             && appContainsAny($norm, ['hoc', 'mon', 'lop', 'phong'])
@@ -161,7 +214,7 @@ function classifyQuestion(string $message): array {
     }
 
     $hasTuitionWord = appContainsAny($norm, ['hoc phi', 'cong no', 'hoa don', 'dong tien', 'tien hoc', 'tien']);
-    $isGeneralTuitionQuestion = appContainsAny($norm, [
+    $isGeneralTuitionQuestion = $isGeneralScope || appContainsAny($norm, [
         'nam hoc', 'nam 202', 'khoa 20', 'tin chi', 'mot tin', '1 tin',
         'dai tra', 'tien tien', 'chat luong cao', 'muc thu', 'bao nhieu mot tin',
         'tre han', 'tre tien hoc', 'tre hoc phi', 'nop tre', 'phat hoc phi',
@@ -171,19 +224,28 @@ function classifyQuestion(string $message): array {
         'xem hoc phi', 'hoc phi cua toi', 'hoc phi cua minh', 'hoc phi cua em',
         'toi con no', 'minh con no', 'em con no', 'con no bao nhieu',
         'da dong hoc phi', 'dong hoc phi chua', 'hoa don hoc phi', 'cong no cua toi',
-    ]);
-    if ($isPersonalTuitionQuestion || ($hasTuitionWord && !$isGeneralTuitionQuestion)) {
+    ]) || ($hasTuitionWord && $isPersonalScope && !$isGeneralTuitionQuestion);
+    if ($isPersonalTuitionQuestion && !$isGeneralTuitionQuestion) {
         return ['class' => 'du_lieu_ca_nhan_sinh_vien', 'intent' => 'personal_tuition'];
+    }
+    if ($hasTuitionWord) {
+        return ['class' => 'kien_thuc_hoc_vu', 'intent' => 'academic_knowledge'];
     }
 
     if (
-        appContainsAny($norm, ['ket qua hoc tap', 'bang diem', 'gpa', 'diem trung binh'])
-        || (str_contains($norm, 'diem') && !appContainsAny($norm, ['diem chuan', 'diem san tuyen sinh', 'diem xet tuyen']))
+        !appContainsAny($norm, ['diem chuan', 'diem san tuyen sinh', 'diem xet tuyen', 'diem ren luyen'])
+        && (
+            appContainsAny($norm, ['ket qua hoc tap', 'bang diem', 'gpa', 'diem trung binh', 'diem mon'])
+            || ($isPersonalScope && str_contains($norm, 'diem'))
+        )
     ) {
         return ['class' => 'du_lieu_ca_nhan_sinh_vien', 'intent' => 'personal_grades'];
     }
 
-    if (appContainsAny($norm, ['thong tin ca nhan', 'ho so sinh vien', 'ma so sinh vien', 'mssv', 'nganh hoc cua', 'khoa hoc cua'])) {
+    if (appContainsAny($norm, ['thong tin ca nhan', 'ho so sinh vien', 'ma so sinh vien', 'mssv']) || (
+        appContainsAny($norm, ['nganh hoc cua', 'khoa hoc cua'])
+        && $isPersonalScope
+    )) {
         return ['class' => 'du_lieu_ca_nhan_sinh_vien', 'intent' => 'personal_profile'];
     }
 
@@ -205,6 +267,9 @@ function refineClassificationWithSession(PDO $pdo, int $sessionId, string $messa
 
     $norm = appNormalizeText($message);
     if ($norm === '' || mb_strlen($norm, 'UTF-8') < 2) {
+        return $classification;
+    }
+    if (questionIntroducesNewKnowledgeTopic($norm)) {
         return $classification;
     }
 
@@ -324,6 +389,20 @@ function buildGeminiHistory(PDO $pdo, int $sessionId, int $beforeMessageId, int 
     return $history;
 }
 
+function shouldUseGeminiHistoryForQuestion(array $classification, string $message): bool {
+    $norm = appNormalizeText($message);
+    if (($classification['class'] ?? '') !== 'kien_thuc_hoc_vu') {
+        return false;
+    }
+    if (questionIntroducesNewKnowledgeTopic($norm)) {
+        return false;
+    }
+    return appContainsAny($norm, [
+        'vay con', 'con cai do', 'cai do', 'cai nay', 'van de do',
+        'thi sao', 'nhu vay', 'bao nhieu', 'co duoc khong',
+    ]);
+}
+
 function exactQuestionPhraseScore(string $question, string $phrases): float {
     $questionNorm = appNormalizeText($question);
     if ($questionNorm === '') {
@@ -365,7 +444,7 @@ function faqIntentMismatchPenalty(string $question, string $faqText): float {
     foreach ([
         'rut', 'huy', 'hoan tien', 'cai thien', 'hoc lai', 'nang diem',
         'tien quyet', 'mon hoc truoc', 'dieu kien', 'phuc khao',
-        'bao hiem', 'thu vien',
+        'bao hiem', 'thu vien', 'le phi', 'xet tuyen', 'nguyen vong', 'hoc ba',
     ] as $term) {
         $termNorm = ' '.appNormalizeText($term).' ';
         if (str_contains($faqNorm, $termNorm) && !str_contains($questionNorm, $termNorm)) {
@@ -696,6 +775,167 @@ function buildTuitionReply(PDO $pdo, array $student): ?string {
             .', trạng thái '.e(statusLabelVi($row['status'] ?? null)).'.';
     }
     return implode('<br>', $lines);
+}
+
+function isGeneralTuitionOverviewQuestion(string $norm): bool {
+    if (!appContainsAny($norm, ['hoc phi', 'tien hoc', 'hp'])) {
+        return false;
+    }
+    if (isPersonalScopedQuestion($norm) || appContainsAny($norm, [
+        'xem hoc phi', 'hoc phi cua toi', 'hoc phi cua minh', 'cong no cua toi',
+        'toi con no', 'minh con no', 'em con no', 'da dong hoc phi',
+    ])) {
+        return false;
+    }
+    if (appContainsAny($norm, [
+        'mien giam', 'gia han', 'xin no', 'tre han', 'nop tre', 'phat',
+        'rut hoc phi', 'hoan hoc phi', 'bao hiem', 'phuc khao', 'thi lai',
+    ])) {
+        return false;
+    }
+    return appContainsAny($norm, [
+        'truong', 'uth', 'nha truong', 'chung', 'muc', 'bao nhieu',
+        'tin chi', 'mot tin', 'khoa', 'nam hoc', 'dai tra', 'tien tien',
+        'chat luong cao', 'chuong trinh chuan',
+    ]);
+}
+
+function buildGeneralTuitionOverviewReply(PDO $pdo, string $question): ?string {
+    try {
+        ensureFaqKnowledgeTable($pdo);
+        $schema = faqColumnSchema($pdo);
+        $rows = dbFetchAll($pdo, faqSelectSql($schema, 'id DESC'));
+    } catch (Throwable $e) {
+        error_log('General tuition overview: '.$e->getMessage());
+        return null;
+    }
+
+    $questionNorm = appNormalizeText($question);
+    $wantedYear = null;
+    if (preg_match('/\b(20\d{2})\b/u', $questionNorm, $m)) {
+        $wantedYear = $m[1];
+    }
+    $isPaymentQuestion = appContainsAny($questionNorm, ['dong', 'nop', 'thanh toan', 'tra cuu', 'payment', 'cong no', 'o dau']);
+    $excludedTopics = [
+        'le phi xet tuyen', 'xet tuyen', 'nguyen vong', 'hoc ba',
+        'phuc khao', 'bao hiem', 'bang diem', 'thi lai', 'rut ho so',
+        'nhap hoc truc tiep', 'ielts', 'mien giam', 'anh em ruot',
+        'con thuong binh', 'thu vien',
+    ];
+    $isWhyQuestion = appContainsAny($questionNorm, ['vi sao', 'tai sao', 'khac gi', 'hon o dau']);
+
+    $candidates = [];
+    foreach ($rows as $row) {
+        $text = trim(implode(' ', [
+            $row['topic_group'] ?? '',
+            $row['tu_khoa'] ?? '',
+            $row['variations'] ?? '',
+            $row['noi_dung'] ?? '',
+        ]));
+        $rowNorm = appNormalizeText($text);
+        if (!appContainsAny($rowNorm, ['hoc phi', 'tien hoc'])) {
+            continue;
+        }
+        if (appContainsAny($rowNorm, $excludedTopics)) {
+            continue;
+        }
+        if (!$isWhyQuestion && appContainsAny($rowNorm, ['ly do hoc phi', 'vi sao chuong trinh tien tien', 'khac gi dai tra'])) {
+            continue;
+        }
+        if ($wantedYear && !str_contains(' '.$rowNorm.' ', ' '.$wantedYear.' ')) {
+            continue;
+        }
+
+        $score = 0;
+        if (appContainsAny($rowNorm, ['hoc phi theo tin chi', 'hoc phi khoa'])) {
+            $score += 100;
+        }
+        if (appContainsAny($rowNorm, ['chuong trinh chuan'])) {
+            $score += 35;
+        }
+        if (appContainsAny($rowNorm, ['tin chi', 'dai tra', 'tien tien', 'chat luong cao', 'tieng anh'])) {
+            $score += 60;
+        }
+        if (appContainsAny($rowNorm, ['cach dong', 'tra cuu hoc phi', 'cong thanh toan', 'payment'])) {
+            $score += $isPaymentQuestion ? 90 : 20;
+        }
+        if (appContainsAny($rowNorm, ['cam ket khong tang', 'khong tang hoc phi'])) {
+            $score += appContainsAny($questionNorm, ['tang', 'on dinh']) ? 80 : 10;
+        }
+        if ($score <= 0) {
+            continue;
+        }
+        $row['_score'] = $score;
+        $candidates[] = $row;
+    }
+
+    if (!$candidates) {
+        return null;
+    }
+
+    usort($candidates, function ($a, $b) {
+        $scoreCompare = ((int)$b['_score']) <=> ((int)$a['_score']);
+        if ($scoreCompare !== 0) {
+            return $scoreCompare;
+        }
+        return ((int)$b['id']) <=> ((int)$a['id']);
+    });
+
+    $lines = ['<strong>Thông tin học phí UTH</strong>'];
+    $seen = [];
+    foreach ($candidates as $row) {
+        $answer = trim((string)($row['noi_dung'] ?? ''));
+        if ($answer === '') {
+            continue;
+        }
+        $key = appNormalizeText($answer);
+        if (isset($seen[$key])) {
+            continue;
+        }
+        $seen[$key] = true;
+        $topic = trim((string)($row['topic_group'] ?: $row['tu_khoa'] ?: 'Học phí'));
+        $lines[] = '- '.e($topic).': '.e($answer);
+        if (count($lines) >= ($isPaymentQuestion ? 4 : 5)) {
+            break;
+        }
+    }
+    $lines[] = 'Nếu bạn muốn biết số tiền còn nợ của riêng mình, hãy hỏi rõ "tôi còn nợ học phí bao nhiêu" để mình tra hóa đơn cá nhân.';
+    return implode('<br>', $lines);
+}
+
+function isAcademicImprovementPolicyQuestion(string $norm): bool {
+    return appContainsAny($norm, ['hoc cai thien', 'cai thien diem', 'nang diem', 'diem thap'])
+        && !isPersonalScopedQuestion($norm);
+}
+
+function buildAcademicImprovementPolicyReply(PDO $pdo): ?string {
+    try {
+        ensureFaqKnowledgeTable($pdo);
+        $schema = faqColumnSchema($pdo);
+        $rows = dbFetchAll($pdo, faqSelectSql($schema, 'id ASC'));
+    } catch (Throwable $e) {
+        error_log('Improvement policy lookup: '.$e->getMessage());
+        return null;
+    }
+
+    foreach ($rows as $row) {
+        $text = trim(implode(' ', [
+            $row['topic_group'] ?? '',
+            $row['tu_khoa'] ?? '',
+            $row['variations'] ?? '',
+        ]));
+        $rowNorm = appNormalizeText($text);
+        if (!appContainsAny($rowNorm, ['hoc cai thien', 'nang diem tich luy', 'diem thap co duoc hoc lai'])) {
+            continue;
+        }
+        $answer = trim((string)($row['noi_dung'] ?? ''));
+        if ($answer === '') {
+            continue;
+        }
+        return '<strong>Quy định học cải thiện điểm</strong><br>'.e($answer);
+    }
+
+    return null;
 }
 
 function buildStudentPromptContext(PDO $pdo, ?array $student, string $intent, array $entities): string {
@@ -1290,7 +1530,7 @@ function retrieveRagChunks(PDO $pdo, string $question, string $intent, array $en
         $params[] = (int)$entities['cohort_year'];
         $params[] = (int)$entities['cohort_year'];
     }
-    if (!empty($student['program_id'])) {
+    if (!empty($student['program_id']) && isPersonalScopedQuestion(appNormalizeText($question))) {
         $sql .= " AND (v.program_id IS NULL OR v.program_id = ?)";
         $params[] = (int)$student['program_id'];
     }
@@ -1431,8 +1671,12 @@ try {
         $classification['intent'],
         $entities
     );
-    $geminiHistory = buildGeminiHistory($pdo, (int)$chatSession['id'], $userMessageId, 4);
-    $personalContext = buildStudentPromptContext($pdo, $student, $classification['intent'], $entities);
+    $geminiHistory = shouldUseGeminiHistoryForQuestion($classification, $userMessage)
+        ? buildGeminiHistory($pdo, (int)$chatSession['id'], $userMessageId, 4)
+        : [];
+    $personalContext = $classification['class'] === 'du_lieu_ca_nhan_sinh_vien'
+        ? buildStudentPromptContext($pdo, $student, $classification['intent'], $entities)
+        : '';
 
     $finish = function (
         string $reply,
@@ -1542,6 +1786,20 @@ try {
     if ($classification['class'] === 'tro_chuyen_thong_thuong') {
         $reply = 'Chào bạn, mình là ChatBot UTH. Mình có thể hỗ trợ tra cứu điểm, lịch học, lịch thi, học phí và giải đáp kiến thức học vụ đã được kiểm duyệt.';
         $finish(nl2br(e($reply)), ['Xem điểm của tôi', 'Lịch học hôm nay', 'Tôi còn nợ học phí không?'], 'ok', 0.8, 'deterministic-small-talk');
+    }
+
+    if (isGeneralTuitionOverviewQuestion(appNormalizeText($userMessage))) {
+        $reply = buildGeneralTuitionOverviewReply($pdo, $userMessage);
+        if ($reply) {
+            $finish($reply, ['Học phí khóa 2026', 'Cách đóng học phí', 'Tôi còn nợ học phí bao nhiêu?'], 'ok', 1.0, 'database-tuition-overview');
+        }
+    }
+
+    if (isAcademicImprovementPolicyQuestion(appNormalizeText($userMessage))) {
+        $reply = buildAcademicImprovementPolicyReply($pdo);
+        if ($reply) {
+            $finish($reply, ['Đăng ký học phần', 'Điểm F là gì?', 'Tạo ticket hỗ trợ'], 'ok', 1.0, 'database-faq-topic');
+        }
     }
 
     [$selectedChunks, $retrievedRows, $threshold] = retrieveRagChunks($pdo, $userMessage, $classification['intent'], $entities, $student, $userMessageId);
