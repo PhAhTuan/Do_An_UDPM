@@ -1,114 +1,56 @@
-# Dự án UTH Chatbot Portal
+# UTH Chatbot Portal
 
-## 📖 Giới thiệu
-**UTH Chatbot Portal** là một hệ thống web tích hợp Chatbot thông minh dựa trên trí tuệ nhân tạo (AI), được thiết kế chuyên biệt để hỗ trợ sinh viên trường Đại học (UTH - University of Transport and Communications). 
+UTH Chatbot Portal là một hệ thống web tích hợp Chatbot thông minh dựa trên trí tuệ nhân tạo (AI), sử dụng Google Gemini API và kỹ thuật RAG. Dự án được thiết kế chuyên biệt để hỗ trợ sinh viên trường Đại học Giao thông Vận tải TP.HCM (UTH) trong việc tự động giải đáp các thắc mắc về học vụ, quy chế, lịch học, học phí, và thông tin trường.
 
-Dự án kết hợp sức mạnh của **Google Gemini API** cùng kỹ thuật **RAG (Retrieval-Augmented Generation)** để tự động giải đáp các thắc mắc về học vụ, quy chế, thông tin trường, lịch học, học phí, và điểm thi. Ngoài ra, hệ thống còn hỗ trợ đọc phản hồi bằng giọng nói tiếng Việt thông qua công nghệ **Text-to-Speech (TTS)**.
+## Tổng quan và Tính năng nổi bật
 
-## 🚀 Công nghệ sử dụng
-- **Frontend:** HTML, CSS, JavaScript (Giao diện web trực quan, thân thiện cho sinh viên và admin).
-- **Backend (Web & API):** PHP (Xử lý logic chính, tích hợp Gemini API, quản lý phiên chat, xác thực).
-- **Backend (TTS Microservice):** Python với FastAPI và thư viện `gTTS`.
-- **Cơ sở dữ liệu:** MySQL (lưu trữ thông tin sinh viên, lịch học, FAQ, lịch sử chat...).
-- **AI / LLM:** Google Gemini API.
+- Chatbot AI thông minh (Gemini + RAG): Trả lời câu hỏi tự nhiên theo ngữ cảnh, tìm kiếm và trích xuất thông tin nội bộ từ kho tri thức FAQ của trường.
+- Cá nhân hóa cho Sinh viên: Cho phép tra cứu thời khóa biểu, lịch thi, hạn chót, truy xuất điểm thi, học phí và thông tin hồ sơ cá nhân.
+- Phát Giọng Nói (Text-to-Speech - TTS): Phản hồi của Chatbot có thể được phát dưới dạng âm thanh tiếng Việt thông qua một service Python độc lập.
+- Phân hệ Admin Dashboard: Quản trị viên có thể quản lý kiến thức nền (FAQ), thông tin người dùng, theo dõi lịch sử chat, thống kê, và xử lý Ticket (yêu cầu hỗ trợ) từ sinh viên.
 
-## ✨ Tính năng nổi bật
-1. **Chatbot AI thông minh (Gemini + RAG):**
-   - Trả lời câu hỏi tự nhiên theo ngữ cảnh. 
-   - Tìm kiếm và trích xuất thông tin nội bộ (FAQ, quy chế đào tạo) qua kỹ thuật RAG.
-2. **Cá nhân hóa cho Sinh viên:**
-   - Tra cứu thời khóa biểu, lịch thi, hạn chót (deadlines).
-   - Truy xuất điểm thi, học phí, và thông tin hồ sơ sinh viên.
-3. **Text-to-Speech (TTS):**
-   - Phản hồi của Chatbot có thể được phát dưới dạng âm thanh tiếng Việt thông qua một service Python độc lập (`tts_server.py`).
-4. **Phân hệ Admin Dashboard:**
-   - Quản lý kiến thức nền (FAQ) cho Chatbot.
-   - Quản lý thông tin người dùng / sinh viên.
-   - Theo dõi lịch sử chat, đánh giá, thống kê (report).
-   - Quản lý Ticket (yêu cầu hỗ trợ) từ sinh viên.
+[Hình ảnh giao diện hoặc Demo GIF có thể được thêm vào đây]
 
-## 📂 Cấu trúc thư mục
+## Hướng dẫn cài đặt (Installation)
 
-```
-Do_An_UDPM/
-│
-├── config.php              # Kết nối MySQL & Gemini API Key (dùng chung toàn dự án)
-├── .htaccess               # Redirect URL gốc sang views/
-│
-├── views/                  # 🌐 Giao diện web (entry points)
-│   ├── login.php
-│   ├── dashboard.php
-│   └── admin_dashboard.php
-│
-├── api/                    # 📡 API endpoints
-│   ├── chatbot.php
-│   ├── get_student_chat.php
-│   ├── get_ticket_chat.php
-│   ├── report_bot.php
-│   ├── student_reply.php
-│   ├── text_to_speech.php
-│   └── upload_avatar.php
-│
-├── core/                   # 🤖 Logic nghiệp vụ
-│   ├── faq_helpers.php
-│   └── new_logic.php
-│
-├── tts/                    # 🔊 Python TTS microservice
-│   ├── server.py
-│   └── requirements.txt
-│
-├── database/               # 🗄 Scripts DB & seed data
-│   ├── do_an_udpm_database_complete.sql
-│   ├── do_an_udpm_demo_seed.sql
-│   ├── uth_db.sql
-│   ├── faq_knowledge_seed.sql
-│   ├── add_column.php
-│   ├── add_new_tables.php
-│   ├── check_db.php
-│   ├── check_tables.php
-│   ├── seed_faq_knowledge.php
-│   └── setup_data.php
-│
-├── css/                    # Stylesheet
-├── js/                     # JavaScript (chatbot.js, admin.js)
-└── uploads/                # File upload của người dùng
-```
-
-## 🛠 Hướng dẫn Cài đặt & Khởi chạy
-
-### 1. Yêu cầu hệ thống
-- Môi trường chạy PHP/MySQL (XAMPP, MAMP, hoặc WAMP).
+### Yêu cầu hệ thống
+- Môi trường chạy PHP/MySQL (XAMPP cho Windows/Mac, hoặc MAMP/WAMP).
 - Python 3.8 trở lên.
 - Pip (Python Package Manager).
 
-### 2. Thiết lập Web (PHP & MySQL)
-1. **Import Cơ sở dữ liệu:**
-   - Mở phpMyAdmin (hoặc công cụ quản lý MySQL của bạn).
-   - Dùng database tên `do_an_udpm`.
+### Các bước cài đặt
+1. Clone hoặc tải mã nguồn dự án về máy tính của bạn.
+2. Đặt toàn bộ mã nguồn vào thư mục root của web server (ví dụ: thư mục `htdocs` của XAMPP/MAMP).
+3. Thiết lập Cơ sở dữ liệu MySQL:
+   - Mở công cụ quản lý MySQL (như phpMyAdmin).
+   - Tạo hoặc sử dụng database có tên `do_an_udpm`.
    - Import file `database/do_an_udpm_database_complete.sql` để tạo schema chính.
-   - Import tiếp file `database/do_an_udpm_demo_seed.sql` để thêm tài khoản mẫu, hồ sơ sinh viên, lịch học, lịch thi, học phí, thông báo/deadline và knowledge đã kiểm duyệt.
-   - Tài khoản mẫu sau khi import mới: `admin / admin123` và `075205019210 / sv123`.
-2. **Cấu hình dự án:**
-   - Mở file `.env`.
-   - Kiểm tra `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME=do_an_udpm`.
-   - Đặt khóa Gemini vào `GEMINI_API_KEY` trong `.env`, không đặt API key trong source code.
-3. **Chạy web:**
-   - Đặt toàn bộ mã nguồn vào thư mục root của web server (ví dụ: `htdocs` của XAMPP hoặc `htdocs` của MAMP).
-   - Mở trình duyệt và truy cập: `http://localhost/<thư_mục_dự_án>`.
+   - Import tiếp file `database/do_an_udpm_demo_seed.sql` để thêm dữ liệu mẫu.
+4. Cấu hình môi trường Web:
+   - Tạo hoặc chỉnh sửa file `.env` tại thư mục gốc.
+   - Thiết lập thông số database: `DB_HOST`, `DB_PORT` (thường là 3306 cho Windows/XAMPP, 8889 cho Mac/MAMP), `DB_USER`, `DB_PASS`, `DB_NAME=do_an_udpm`.
+   - Cập nhật khóa API vào biến `GEMINI_API_KEY`.
+5. Thiết lập Server TTS (Text-to-Speech):
+   - Mở Terminal (Mac) hoặc Command Prompt (Windows) tại thư mục `tts` hoặc thư mục gốc chứa code TTS của dự án.
+   - Cài đặt thư viện: 
+     ```bash
+     pip install -r requirements.txt
+     ```
 
-### 3. Thiết lập Server TTS (Text-to-Speech)
-Server TTS cần được chạy song song để hỗ trợ tính năng phát âm thanh của bot.
-1. Mở Terminal / Command Prompt tại thư mục dự án.
-2. Cài đặt các thư viện Python:
-   ```bash
-   pip install -r requirements-tts.txt
-   ```
-3. Khởi chạy server FastAPI:
-   ```bash
-   uvicorn tts_server:app --host 0.0.0.0 --port 8000
-   ```
-   *(Server sẽ chạy tại `http://localhost:8000`)*
+## Hướng dẫn sử dụng (Usage)
 
-## 🛡 Lưu ý
-- API Key của Gemini cần được bảo mật trong `.env`; không hardcode hoặc commit API key vào source code.
-- Đối với MacOS dùng MAMP, cổng MySQL mặc định thường là `8889` thay vì `3306`. Hãy kiểm tra kỹ file `config.php`.
+1. Khởi động Web Server (Apache/MySQL) trên XAMPP/MAMP.
+2. Khởi động Server TTS:
+   - Mở Terminal/Command Prompt tại thư mục chứa file server.py.
+   - Chạy lệnh:
+     ```bash
+     uvicorn server:app --host 0.0.0.0 --port 8000
+     ```
+3. Truy cập vào hệ thống thông qua trình duyệt web:
+   ```text
+   http://localhost/<thư_mục_dự_án>
+   ```
+4. Sử dụng các tài khoản mẫu để đăng nhập:
+   - Tài khoản Admin: `admin / admin123`
+   - Tài khoản Sinh viên: `075205019210 / sv123`
+

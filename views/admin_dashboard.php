@@ -1745,6 +1745,7 @@ if ($selectedLogSessionId > 0) {
             <button class="btn" onclick="closeModal('studentDetailModal')">Đóng cửa sổ</button>
         </div>
     </div>
+</div>
 <!-- Admin Profile Modal -->
 <div id="adminProfileModal" class="modal-overlay">
   <div class="modal-box" style="max-width: 400px; text-align: center;">

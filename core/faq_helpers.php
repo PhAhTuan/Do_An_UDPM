@@ -69,7 +69,86 @@ function appStripAccents(string $s): string {
     return strtr($s, $m);
 }
 
+/**
+ * Từ điển viết tắt / từ lóng phổ biến của sinh viên đại học Việt Nam.
+ * Key phải viết thường, KHÔNG dấu-hoặc-có-dấu tùy trường hợp thực tế các bạn hay gõ.
+ * Value là cụm từ đầy đủ, có dấu, để sau đó pipeline chuẩn hóa (bỏ dấu, hạ chữ thường)
+ * tiếp tục xử lý như bình thường.
+ *
+ * Lưu ý: việc khớp từ được thực hiện theo TỪ NGUYÊN VẸN (word boundary bằng khoảng trắng),
+ * nên các từ ngắn như 'k', 'vs', 'tc' chỉ được thay khi đứng riêng lẻ, không thay
+ * khi là một phần của từ/chuỗi khác (vd "10k" sẽ không bị đụng vào vì không có khoảng trắng
+ * tách "10" và "k").
+ */
+function appSlangDictionary(): array {
+    return [
+        // Học phí / học vụ
+        'hp'        => 'học phí',
+        'hphi'      => 'học phí',
+        'dkhp'      => 'đăng ký học phần',
+        'đkhp'      => 'đăng ký học phần',
+        'dkmh'      => 'đăng ký môn học',
+        'đkmh'      => 'đăng ký môn học',
+        'tkb'       => 'thời khóa biểu',
+        'tc'        => 'tín chỉ',
+        'gk'        => 'giữa kỳ',
+        'ck'        => 'cuối kỳ',
+        'mssv'      => 'mã số sinh viên',
+        // Đơn vị / phòng ban
+        'ktx'       => 'ký túc xá',
+        'pdt'       => 'phòng đào tạo',
+        'pđt'       => 'phòng đào tạo',
+        'ptckt'     => 'phòng tài chính kế toán',
+        'ctsv'      => 'công tác sinh viên',
+        'gvcn'      => 'giáo viên chủ nhiệm',
+        'gvhd'      => 'giáo viên hướng dẫn',
+        'cvht'      => 'cố vấn học tập',
+        // Nghiên cứu / khóa luận / thực tập
+        'nckh'      => 'nghiên cứu khoa học',
+        'tttn'      => 'thực tập tốt nghiệp',
+        'datn'      => 'đồ án tốt nghiệp',
+        'đatn'      => 'đồ án tốt nghiệp',
+        'dacn'      => 'đồ án chuyên ngành',
+        'đacn'      => 'đồ án chuyên ngành',
+        // Giấy tờ / thủ tục khác
+        'bhyt'      => 'bảo hiểm y tế',
+        'ttsv'      => 'thẻ sinh viên',
+        'gdqp'      => 'giáo dục quốc phòng',
+        // Kết quả học tập (cụm từ, không chỉ 1 từ)
+        'rớt môn'   => 'thi trượt môn học',
+        'rot mon'   => 'thi trượt môn học',
+        'cải thiện' => 'học cải thiện điểm số',
+        'cai thien' => 'học cải thiện điểm số',
+        'no mon'    => 'nợ môn học',
+        'nợ môn'    => 'nợ môn học',
+        // Viết tắt chat chung (rất phổ biến khi sinh viên nhắn tin)
+        'sv'        => 'sinh viên',
+        'gv'        => 'giảng viên',
+        'dh'        => 'đại học',
+        'đh'        => 'đại học',
+        'ntn'       => 'như thế nào',
+        'vs'        => 'với',
+        'k'         => 'không',
+        'ko'        => 'không',
+        'đc'        => 'được',
+        'dc'        => 'được',
+    ];
+}
+
+/**
+ * Dịch nhanh từ viết tắt/từ lóng sinh viên sang từ gốc trước khi chuẩn hóa chuỗi,
+ * để AI/RAG hiểu đúng ý ngay cả khi sinh viên gõ tắt.
+ */
+function appExpandSlang(string $value): string {
+    $padded = ' ' . $value . ' ';
+    foreach (appSlangDictionary() as $abbr => $full) {
+        $padded = str_replace(' ' . $abbr . ' ', ' ' . $full . ' ', $padded);
+    }
+    return trim($padded);
+}
+
 function appNormalizeText(string $value): string {
+    $value = appExpandSlang(mb_strtolower($value, 'UTF-8'));
     $value = mb_strtolower(appStripAccents($value), 'UTF-8');
     $value = preg_replace('/[^a-z0-9]+/u', ' ', $value);
     return trim(preg_replace('/\s+/u', ' ', $value));
@@ -461,6 +540,7 @@ function appEnsureRagViewShape(PDO $pdo): void {
 
 /**
  * Phát hiện schema thực tế của bảng faq (hỗ trợ nhiều tên cột).
+ * Phiên bản nâng cấp: nhận diện thêm cột variations và priority.
  */
 function faqColumnSchema(PDO $pdo): array {
     $rows = dbFetchAll($pdo, "SHOW COLUMNS FROM faq");
@@ -468,21 +548,25 @@ function faqColumnSchema(PDO $pdo): array {
 
     if (in_array('keywords', $columns, true) && in_array('answer', $columns, true)) {
         return [
-            'keyword' => 'keywords',
-            'answer'  => 'answer',
-            'link'    => in_array('nav_link',     $columns, true) ? 'nav_link'     : null,
-            'topic'   => in_array('topic_group',  $columns, true) ? 'topic_group'  : null,
-            'stt'     => in_array('stt',           $columns, true),
+            'keyword'    => 'keywords',
+            'answer'     => 'answer',
+            'link'       => in_array('nav_link',     $columns, true) ? 'nav_link'     : null,
+            'topic'      => in_array('topic_group',  $columns, true) ? 'topic_group'  : null,
+            'stt'        => in_array('stt',           $columns, true),
+            'variations' => in_array('variations',    $columns, true) ? 'variations'   : null,
+            'priority'   => in_array('priority',      $columns, true) ? 'priority'     : null,
         ];
     }
 
     if (in_array('tu_khoa', $columns, true) && in_array('noi_dung', $columns, true)) {
         return [
-            'keyword' => 'tu_khoa',
-            'answer'  => 'noi_dung',
-            'link'    => in_array('link_dieu_huong', $columns, true) ? 'link_dieu_huong' : null,
-            'topic'   => in_array('topic_group',     $columns, true) ? 'topic_group'     : null,
-            'stt'     => in_array('stt',              $columns, true),
+            'keyword'    => 'tu_khoa',
+            'answer'     => 'noi_dung',
+            'link'       => in_array('link_dieu_huong', $columns, true) ? 'link_dieu_huong' : null,
+            'topic'      => in_array('topic_group',     $columns, true) ? 'topic_group'     : null,
+            'stt'        => in_array('stt',              $columns, true),
+            'variations' => in_array('variations',       $columns, true) ? 'variations'      : null,
+            'priority'   => in_array('priority',         $columns, true) ? 'priority'        : null,
         ];
     }
 
@@ -493,12 +577,21 @@ function quoteIdentifier(string $identifier): string {
     return '`' . str_replace('`', '``', $identifier) . '`';
 }
 
-function faqSelectSql(array $schema, string $orderBy = 'id DESC'): string {
-    $keyword = quoteIdentifier($schema['keyword']) . ' AS tu_khoa';
-    $answer  = quoteIdentifier($schema['answer'])  . ' AS noi_dung';
-    $link    = $schema['link']  ? quoteIdentifier($schema['link'])  . ' AS link_dieu_huong' : "'' AS link_dieu_huong";
-    $topic   = $schema['topic'] ? quoteIdentifier($schema['topic']) . ' AS topic_group'     : "'' AS topic_group";
-    return "SELECT id, {$topic}, {$keyword}, {$answer}, {$link} FROM faq ORDER BY {$orderBy}";
+function faqSelectSql(array $schema, string $orderBy = 'priority DESC, id DESC'): string {
+    $keyword    = quoteIdentifier($schema['keyword']) . ' AS tu_khoa';
+    $answer     = quoteIdentifier($schema['answer'])  . ' AS noi_dung';
+    $link       = $schema['link']       ? quoteIdentifier($schema['link'])       . ' AS link_dieu_huong' : "'' AS link_dieu_huong";
+    $topic      = $schema['topic']      ? quoteIdentifier($schema['topic'])      . ' AS topic_group'     : "'' AS topic_group";
+    $variations = $schema['variations'] ? quoteIdentifier($schema['variations']) . ' AS variations'      : "'' AS variations";
+    $priority   = $schema['priority']   ? quoteIdentifier($schema['priority'])   . ' AS priority'        : "0 AS priority";
+
+    // Nếu bảng chưa có cột priority (schema cũ) thì không thể ORDER BY priority thật,
+    // fallback về id DESC để tránh lỗi SQL "Unknown column".
+    if (!$schema['priority'] && stripos($orderBy, 'priority') !== false) {
+        $orderBy = 'id DESC';
+    }
+
+    return "SELECT id, {$topic}, {$keyword}, {$answer}, {$link}, {$variations}, {$priority} FROM faq ORDER BY {$orderBy}";
 }
 
 function faqInsertSql(array $schema): string {
@@ -524,24 +617,50 @@ function faqInsertSql(array $schema): string {
         $values[]  = '?';
     }
 
+    if ($schema['variations']) {
+        $columns[] = quoteIdentifier($schema['variations']);
+        $values[]  = '?';
+    }
+
+    if ($schema['priority']) {
+        $columns[] = quoteIdentifier($schema['priority']);
+        $values[]  = '?';
+    }
+
     return 'INSERT INTO faq (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $values) . ')';
 }
 
 function faqUpdateSql(array $schema): string {
     $sets = [];
-    if ($schema['topic']) $sets[] = quoteIdentifier($schema['topic']) . ' = ?';
+    if ($schema['topic'])      $sets[] = quoteIdentifier($schema['topic'])      . ' = ?';
     $sets[] = quoteIdentifier($schema['keyword']) . ' = ?';
     $sets[] = quoteIdentifier($schema['answer'])  . ' = ?';
-    if ($schema['link'])  $sets[] = quoteIdentifier($schema['link'])  . ' = ?';
+    if ($schema['link'])       $sets[] = quoteIdentifier($schema['link'])       . ' = ?';
+    if ($schema['variations']) $sets[] = quoteIdentifier($schema['variations']) . ' = ?';
+    if ($schema['priority'])   $sets[] = quoteIdentifier($schema['priority'])   . ' = ?';
     return 'UPDATE faq SET ' . implode(', ', $sets) . ' WHERE id = ?';
 }
 
-function faqFormParams(array $schema, string $topic, string $keyword, string $answer, string $link = ''): array {
+/**
+ * @param string $variations Các cách hỏi khác nhau cho cùng 1 câu trả lời, mỗi cách hỏi 1 dòng.
+ * @param int    $priority   Trọng số ưu tiên, số càng lớn càng được ưu tiên hiển thị/tìm kiếm trước.
+ */
+function faqFormParams(
+    array $schema,
+    string $topic,
+    string $keyword,
+    string $answer,
+    string $link = '',
+    string $variations = '',
+    int $priority = 0
+): array {
     $params = [];
     if ($schema['topic']) $params[] = trim($topic) !== '' ? trim($topic) : 'Chưa phân loại';
     $params[] = $keyword;
     $params[] = $answer;
-    if ($schema['link'])  $params[] = $link;
+    if ($schema['link'])       $params[] = $link;
+    if ($schema['variations']) $params[] = trim($variations) !== '' ? trim($variations) : null;
+    if ($schema['priority'])   $params[] = $priority;
     return $params;
 }
 
@@ -552,13 +671,65 @@ function ensureFaqKnowledgeTable(PDO $pdo): void {
             `topic_group` VARCHAR(255) DEFAULT NULL COMMENT 'Nhom chu de',
             `tu_khoa` TEXT NOT NULL COMMENT 'Cau hoi / tu khoa sinh vien hay go',
             `noi_dung` TEXT NOT NULL COMMENT 'Noi dung tra loi chuan xac cua truong',
+            `variations` TEXT DEFAULT NULL COMMENT 'Cac cach hoi khac nhau cho cung 1 noi dung',
+            `priority` INT NOT NULL DEFAULT 0 COMMENT 'Trong so uu tien tim kiem, cang cao cang uu tien',
             `link_dieu_huong` VARCHAR(255) DEFAULT NULL COMMENT 'Link dieu huong den muc lien quan',
             PRIMARY KEY (`id`),
             KEY `idx_topic_group` (`topic_group`),
-            FULLTEXT KEY `ft_keywords_answer` (`tu_khoa`, `noi_dung`)
+            KEY `idx_priority` (`priority`),
+            FULLTEXT KEY `ft_keywords_answer` (`tu_khoa`, `noi_dung`, `variations`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
           COMMENT='Kho tri thuc FAQ truong UTH'
     ");
+
+    // Nếu bảng `faq` đã tồn tại từ trước (được tạo trước khi có variations/priority),
+    // CREATE TABLE IF NOT EXISTS ở trên sẽ KHÔNG tự thêm cột mới vào bảng cũ.
+    // Vì vậy cần kiểm tra và ALTER TABLE bổ sung để đảm bảo logic hoạt động đúng
+    // trên cả các cài đặt cũ lẫn mới.
+    $columns = array_column(dbFetchAll($pdo, "SHOW COLUMNS FROM `faq`"), 'Field');
+    $keywordColumn = in_array('tu_khoa', $columns, true)
+        ? 'tu_khoa'
+        : (in_array('keywords', $columns, true) ? 'keywords' : null);
+    $answerColumn = in_array('noi_dung', $columns, true)
+        ? 'noi_dung'
+        : (in_array('answer', $columns, true) ? 'answer' : null);
+
+    if (!$keywordColumn || !$answerColumn) {
+        throw new RuntimeException('Bảng faq thiếu cột từ khóa/nội dung hợp lệ.');
+    }
+
+    if (!in_array('variations', $columns, true)) {
+        dbExecute($pdo, "
+            ALTER TABLE `faq`
+            ADD COLUMN `variations` TEXT DEFAULT NULL COMMENT 'Cac cach hoi khac nhau cho cung 1 noi dung' AFTER ".quoteIdentifier($answerColumn)."
+        ");
+        $columns[] = 'variations';
+    }
+
+    if (!in_array('priority', $columns, true)) {
+        dbExecute($pdo, "
+            ALTER TABLE `faq`
+            ADD COLUMN `priority` INT NOT NULL DEFAULT 0 COMMENT 'Trong so uu tien tim kiem, cang cao cang uu tien' AFTER `variations`
+        ");
+    }
+
+    // Đảm bảo FULLTEXT KEY đã bao gồm cột `variations` (áp dụng cho bảng cũ vừa được ALTER ở trên).
+    $expectedFulltextColumns = [$keywordColumn, $answerColumn, 'variations'];
+    $indexRows = dbFetchAll($pdo, "SHOW INDEX FROM `faq` WHERE Key_name = 'ft_keywords_answer'");
+    usort($indexRows, fn($a, $b) => (int)$a['Seq_in_index'] <=> (int)$b['Seq_in_index']);
+    $indexes = array_column($indexRows, 'Column_name');
+    if (!$indexes) {
+        dbExecute($pdo, "ALTER TABLE `faq` ADD FULLTEXT KEY `ft_keywords_answer` ("
+            .implode(', ', array_map('quoteIdentifier', $expectedFulltextColumns)).")");
+    } elseif ($indexes !== $expectedFulltextColumns) {
+        dbExecute($pdo, "ALTER TABLE `faq` DROP INDEX `ft_keywords_answer`");
+        dbExecute($pdo, "ALTER TABLE `faq` ADD FULLTEXT KEY `ft_keywords_answer` ("
+            .implode(', ', array_map('quoteIdentifier', $expectedFulltextColumns)).")");
+    }
+
+    if (!in_array('idx_priority', array_column(dbFetchAll($pdo, "SHOW INDEX FROM `faq` WHERE Key_name = 'idx_priority'"), 'Key_name'), true)) {
+        dbExecute($pdo, "ALTER TABLE `faq` ADD KEY `idx_priority` (`priority`)");
+    }
 }
 
 function seedFaqKnowledgeFromSqlFile(PDO $pdo, string $sqlPath): int {
@@ -588,13 +759,21 @@ function seedFaqKnowledgeFromSqlFile(PDO $pdo, string $sqlPath): int {
 
     $insertSql = trim(substr($sql, $start, $end - $start));
     $insertSql = preg_replace('/;\s*$/', '', $insertSql);
-    $insertSql .= "
-        ON DUPLICATE KEY UPDATE
-            `topic_group` = VALUES(`topic_group`),
-            `tu_khoa` = VALUES(`tu_khoa`),
-            `noi_dung` = VALUES(`noi_dung`),
-            `link_dieu_huong` = VALUES(`link_dieu_huong`)
-    ";
+    $insertColumns = [];
+    if (preg_match('/INSERT\s+INTO\s+`faq`\s*\((.*?)\)\s*VALUES/is', $insertSql, $matches)) {
+        preg_match_all('/`([^`]+)`/', $matches[1], $columnMatches);
+        $insertColumns = $columnMatches[1] ?? [];
+    }
+    $updateAssignments = [];
+    foreach (['topic_group', 'tu_khoa', 'noi_dung', 'variations', 'link_dieu_huong', 'priority'] as $column) {
+        if (in_array($column, $insertColumns, true)) {
+            $quoted = quoteIdentifier($column);
+            $updateAssignments[] = "{$quoted} = VALUES({$quoted})";
+        }
+    }
+    if ($updateAssignments) {
+        $insertSql .= "\n        ON DUPLICATE KEY UPDATE\n            ".implode(",\n            ", $updateAssignments);
+    }
 
     dbExecute($pdo, $insertSql);
     return (int)dbFetchValue($pdo, "SELECT COUNT(*) FROM `faq`");

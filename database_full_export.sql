@@ -678,22 +678,12 @@ CREATE TABLE api_usage_logs (
 -- --------------------------------------------------------------------------
 -- 9. LEGACY FAQ COMPATIBILITY + RAW IMPORT
 -- --------------------------------------------------------------------------
-CREATE TABLE faq (
-    id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-    topic_group VARCHAR(255) NULL,
-    tu_khoa TEXT NOT NULL,
-    noi_dung LONGTEXT NOT NULL,
-    link_dieu_huong VARCHAR(1000) NULL,
-    verification_status ENUM('draft','pending','verified','rejected','expired') NOT NULL DEFAULT 'pending',
-    source_url VARCHAR(1000) NULL,
-    valid_from DATETIME NULL,
-    valid_until DATETIME NULL,
-    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_faq_topic (topic_group),
-    INDEX idx_faq_verified (verification_status, valid_from, valid_until),
-    FULLTEXT KEY ft_faq_search (tu_khoa, noi_dung)
-) ENGINE=InnoDB;
+-- !! QUAN TRỌNG: Định nghĩa CREATE TABLE `faq` chính thức đã được chuyển xuống
+-- phần "CSDL Kho Tri Thuc FAQ" bên dưới (dòng ~1513) với schema đầy đủ hơn,
+-- bao gồm các cột variations, priority và FULLTEXT 3 cột phục vụ RAG.
+-- Khối này bị GIỮ LẠI làm tham chiếu lịch sử, KHÔNG CẦN chạy lại.
+-- Khi import vào MySQL mới, chỉ cần dùng lệnh CREATE TABLE ở phần phía dưới.
+-- --------------------------------------------------------------------------
 
 INSERT INTO faq (id, topic_group, tu_khoa, noi_dung, link_dieu_huong) VALUES
 (1, 'Thông tin chung', 'Địa chỉ trường ở đâu? UTH có mấy cơ sở? Trường nằm ở chỗ nào?', 'Trường Đại học Giao thông Vận tải TP.HCM (UTH) có cơ sở chính tại Số 2, Đường Võ Oanh, Phường 25, Quận Bình Thạnh, TP.HCM. Ngoài ra, trường còn có các cơ sở đào tạo khác tại Quận 12 (TP.HCM), TP. Thủ Đức và TP. Vũng Tàu. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về bãi giữ xe của trường, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
@@ -1510,17 +1500,24 @@ CREATE DATABASE IF NOT EXISTS `do_an_udpm`
 USE `do_an_udpm`;
 
 DROP TABLE IF EXISTS `faq`;
+-- Schema chính thức dùng cho Chatbot RAG UTH.
+-- Bao gồm: variations (bắt từ lóng/viết tắt), priority (tie-break khi rank),
+-- FULLTEXT 3 cột để MATCH AGAINST score cộng dồn đúng cách.
+-- Lưu ý: set innodb_ft_min_token_size = 2 trong my.cnf để index từ tiếng Việt 1-2 ký tự.
 CREATE TABLE `faq` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
   `topic_group` VARCHAR(255) DEFAULT NULL COMMENT 'Nhom chu de',
   `tu_khoa` TEXT NOT NULL COMMENT 'Cau hoi / tu khoa sinh vien hay go',
   `noi_dung` TEXT NOT NULL COMMENT 'Noi dung tra loi chuan xac cua truong',
+  `variations` TEXT NULL COMMENT 'Luu cac bien the cau hoi, tu long sinh vien (VD: hp, dkhp, rot mon...)',
+  `priority` INT NOT NULL DEFAULT 0 COMMENT 'Diem uu tien khi RAG search, so cang to cang uu tien',
   `link_dieu_huong` VARCHAR(255) DEFAULT NULL COMMENT 'Link dieu huong den muc lien quan',
   PRIMARY KEY (`id`),
   KEY `idx_topic_group` (`topic_group`),
-  FULLTEXT KEY `ft_keywords_answer` (`tu_khoa`, `noi_dung`)
+  KEY `idx_priority` (`priority`),
+  FULLTEXT KEY `ft_keywords_answer` (`tu_khoa`, `noi_dung`, `variations`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  COMMENT='Kho tri thuc FAQ truong UTH';
+  COMMENT='Kho tri thuc FAQ truong UTH - Schema RAG v2';
 
 INSERT INTO `faq` (`id`, `topic_group`, `tu_khoa`, `noi_dung`, `link_dieu_huong`) VALUES
 (1, 'Thông tin chung', 'Địa chỉ trường ở đâu? UTH có mấy cơ sở? Trường nằm ở chỗ nào?', 'Trường Đại học Giao thông Vận tải TP.HCM (UTH) có cơ sở chính tại Số 2, Đường Võ Oanh, Phường 25, Quận Bình Thạnh, TP.HCM. Ngoài ra, trường còn có các cơ sở đào tạo khác tại Quận 12 (TP.HCM), TP. Thủ Đức và TP. Vũng Tàu. Bên cạnh đó, nếu bạn cũng quan tâm về mượn phòng học, hay về bãi giữ xe của trường, cứ hỏi mình thêm nha.', '/thong-tin-truong'),
