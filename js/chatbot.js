@@ -25,6 +25,7 @@ const VOICE_AUTO_KEY = 'uth_chat_voice_auto';
 const TTS_API_URL = '../api/text_to_speech.php';
 let voiceAutoRead = localStorage.getItem(VOICE_AUTO_KEY) === '1';
 let activeAudio = null;
+let activeUtterance = null;
 let activeSpeechButton = null;
 let speechRequestId = 0;
 
@@ -48,10 +49,14 @@ function stopSpeech() {
         activeAudio.pause();
         activeAudio.currentTime = 0;
     }
+    if ('speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+    }
     if (activeSpeechButton) {
         setSpeechButtonState(activeSpeechButton, false);
     }
     activeAudio = null;
+    activeUtterance = null;
     activeSpeechButton = null;
 }
 
@@ -87,7 +92,7 @@ async function speakText(text, button = null) {
     }
 
     // Nếu đang phát chính đoạn audio của nút này thì dừng lại
-    if (activeSpeechButton === button && activeAudio) {
+    if (activeSpeechButton === button && (activeAudio || ("speechSynthesis" in window && window.speechSynthesis.speaking))) {
         stopSpeech();
         return;
     }
@@ -148,11 +153,13 @@ async function speakText(text, button = null) {
         if ('speechSynthesis' in window) {
             const utterance = new SpeechSynthesisUtterance(clean);
             utterance.lang = 'vi-VN';
+            activeUtterance = utterance;
             
             utterance.onend = () => {
                 if (activeSpeechButton === button) {
                     setSpeechButtonState(button, false);
                     activeSpeechButton = null;
+                    activeUtterance = null;
                 }
             };
             
@@ -161,6 +168,7 @@ async function speakText(text, button = null) {
                 if (activeSpeechButton === button) {
                     setSpeechButtonState(button, false);
                     activeSpeechButton = null;
+                    activeUtterance = null;
                 }
             };
             
@@ -169,6 +177,7 @@ async function speakText(text, button = null) {
             if (requestId === speechRequestId && activeSpeechButton === button) {
                 setSpeechButtonState(button, false);
                 activeSpeechButton = null;
+                activeUtterance = null;
             }
             alert(error.message || "Không thể tải giọng nói lúc này.");
         }
