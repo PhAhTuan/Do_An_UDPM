@@ -149,6 +149,10 @@ function classifyQuestion(string $message): array {
         return ['class' => 'thong_bao_deadline', 'intent' => 'announcements_deadlines'];
     }
 
+    if (appContainsAny($norm, ['bay gio la may gio', 'may gio roi', 'gio hien tai', 'xem gio', 'hom nay la ngay may', 'thu may hom nay', 'ngay hom nay', 'gio nay'])) {
+        return ['class' => 'tien_ich_thoi_gian', 'intent' => 'utility_datetime'];
+    }
+
     if (appContainsAny($norm, ['xin chao', 'chao', 'hello', 'hi', 'cam on', 'ban la ai', 'ke chuyen', 'noi chuyen'])) {
         return ['class' => 'tro_chuyen_thong_thuong', 'intent' => 'small_talk'];
     }
@@ -375,21 +379,21 @@ function buildTuitionReply(PDO $pdo, array $student): ?string {
 function buildPortalNavigationReply(PDO $pdo, ?array $student, string $intent): array {
     if ($intent === 'nav_support') {
         return [
-            '<strong>Hỗ trợ trực tuyến</strong><br>Bạn có thể nhập trực tiếp vấn đề cần hỗ trợ vào khung chat. Nếu câu hỏi cần cán bộ xử lý hoặc thiếu dữ liệu trong hệ thống, mình sẽ hướng dẫn tạo ticket hỗ trợ để bộ phận phụ trách phản hồi.',
+            '<strong>Hỗ trợ trực tuyến</strong><br>Mình có thể giúp bạn đi đúng hướng ngay từ đây. Bạn chỉ cần mô tả vấn đề cần hỗ trợ vào khung chat, còn nếu nội dung cần cán bộ xử lý hoặc hệ thống chưa có dữ liệu thì mình sẽ hướng dẫn tạo ticket để bộ phận phụ trách phản hồi.',
             ['Tạo ticket hỗ trợ', 'Hỏi lịch học', 'Hỏi học phí']
         ];
     }
 
     if ($intent === 'nav_online_training') {
         return [
-            '<strong>Đào tạo trực tuyến</strong><br>Bạn có thể truy cập khu vực học trực tuyến của UTH từ Portal để xem tài liệu, bài giảng và thông báo lớp học. Nếu bạn bị lỗi đăng nhập hoặc không thấy lớp học, hãy gửi mô tả lỗi để mình tạo ticket hỗ trợ.',
+            '<strong>Đào tạo trực tuyến</strong><br>Phần học trực tuyến của UTH nằm trong Portal, nơi bạn có thể xem tài liệu, bài giảng và thông báo lớp học. Nếu bạn đang gặp lỗi đăng nhập hoặc không thấy lớp học, cứ nói rõ lỗi cho mình, mình sẽ giúp bạn xử lý tiếp hoặc tạo ticket hỗ trợ.',
             ['Không thấy lớp học', 'Lỗi đăng nhập', 'Tạo ticket hỗ trợ']
         ];
     }
 
     if ($intent === 'nav_student_services') {
         return [
-            '<strong>Dịch vụ sinh viên</strong><br>Mục này hỗ trợ các thủ tục như xác nhận sinh viên, cấp lại thẻ sinh viên, vay vốn, miễn giảm học phí, điểm rèn luyện, tư vấn sinh viên và các yêu cầu hành chính khác. Bạn có thể nói rõ thủ tục cần tra cứu để mình tìm đúng thông tin.',
+            '<strong>Dịch vụ sinh viên</strong><br>Mình có thể hỗ trợ bạn tra nhanh các thủ tục như xác nhận sinh viên, cấp lại thẻ, vay vốn, miễn giảm học phí, điểm rèn luyện hay các yêu cầu hành chính khác. Bạn cứ nói rõ thủ tục cần tra cứu, mình sẽ tìm đúng phần liên quan cho bạn.',
             ['Cấp lại thẻ sinh viên', 'Xin giấy xác nhận', 'Điểm rèn luyện']
         ];
     }
@@ -406,7 +410,7 @@ function buildPortalNavigationReply(PDO $pdo, ?array $student, string $intent): 
         if ($credits > 0) {
             $lines[] = '- Tổng tín chỉ chương trình: '.$credits;
         }
-        $lines[] = 'Bạn có thể hỏi tiếp tên học kỳ hoặc nhóm môn cụ thể để mình tra cứu sâu hơn khi dữ liệu chương trình khung được cập nhật đầy đủ.';
+        $lines[] = 'Nếu bạn muốn, mình có thể giúp bạn bám vào từng học kỳ hoặc nhóm môn cụ thể để tra cứu sâu hơn.';
         return [implode('<br>', $lines), ['Lớp học phần hiện tại', 'Môn học điều kiện', 'Kết quả học tập']];
     }
 
@@ -427,7 +431,7 @@ function buildPortalNavigationReply(PDO $pdo, ?array $student, string $intent): 
         ");
         if (!$rows) {
             return [
-                '<strong>Môn học điều kiện</strong><br>Database hiện chưa có danh sách môn tiên quyết/môn điều kiện. Bạn có thể gửi tên môn học cụ thể để mình ghi nhận và tạo ticket cập nhật dữ liệu nếu cần.',
+                '<strong>Môn học điều kiện</strong><br>Hiện mình chưa thấy danh sách môn tiên quyết/môn điều kiện trong database. Nếu bạn gửi tên môn học cụ thể, mình có thể ghi nhận để hỗ trợ tiếp hoặc tạo ticket cập nhật dữ liệu khi cần.',
                 ['Tạo ticket hỗ trợ', 'Hỏi chương trình khung', 'Hỏi đăng ký học phần']
             ];
         }
@@ -440,7 +444,7 @@ function buildPortalNavigationReply(PDO $pdo, ?array $student, string $intent): 
     }
 
     if ($intent === 'nav_payment') {
-        $reply = '<strong>Cổng thanh toán trực tuyến</strong><br>Bạn có thể thanh toán học phí tại <a href="https://payment.ut.edu.vn" target="_blank" rel="noopener">payment.ut.edu.vn</a> hoặc mục Cổng thanh toán trên Portal. Nếu bạn hỏi số tiền còn nợ, mình sẽ tra cứu trực tiếp hóa đơn trong database của sinh viên đang đăng nhập.';
+        $reply = '<strong>Cổng thanh toán trực tuyến</strong><br>Bạn có thể thanh toán học phí tại <a href="https://payment.ut.edu.vn" target="_blank" rel="noopener">payment.ut.edu.vn</a> hoặc trong mục Cổng thanh toán trên Portal. Nếu bạn muốn biết số tiền còn nợ, mình sẽ tra cứu trực tiếp hóa đơn của sinh viên đang đăng nhập để trả lời chính xác hơn.';
         return [$reply, ['Tôi còn nợ học phí không?', 'Hạn đóng học phí', 'Tạo ticket hỗ trợ']];
     }
 
@@ -486,7 +490,35 @@ function buildAnnouncementReply(PDO $pdo, string $question): ?string {
             .($row['summary'] ? ' - '.e(mb_substr($row['summary'], 0, 180, 'UTF-8')) : '');
     }
 
-    return $items ? '<strong>Thông báo / deadline liên quan</strong><br>'.implode('<br>', $items) : null;
+    if (!$items) {
+        return null;
+    }
+
+    return '<strong>Thông báo / deadline liên quan</strong><br>Mình đã lọc ra các mục có khả năng liên quan nhất, bạn xem nhanh bên dưới nhé:<br><br>'.implode('<br><br>', $items).'<br><br>Nếu bạn muốn, mình có thể rút gọn lại chỉ còn mục sát nhất với câu hỏi của bạn.';
+}
+
+function buildUtilityReply(string $intent): array {
+    $now = new DateTimeImmutable('now', new DateTimeZone('Asia/Ho_Chi_Minh'));
+    $timeLabel = $now->format('H:i');
+    $dateLabel = $now->format('d/m/Y');
+    $dayLabel = match ((int)$now->format('N')) {
+        1 => 'Thứ 2',
+        2 => 'Thứ 3',
+        3 => 'Thứ 4',
+        4 => 'Thứ 5',
+        5 => 'Thứ 6',
+        6 => 'Thứ 7',
+        7 => 'Chủ nhật',
+    };
+
+    if ($intent === 'utility_datetime') {
+        return [
+            '<strong>Thời gian hiện tại</strong><br>Hôm nay là '.e($dayLabel).', ngày '.e($dateLabel).', và bây giờ là '.e($timeLabel).'. Nếu bạn muốn, mình cũng có thể nhắc thêm lịch học hoặc lịch thi gần nhất.',
+            ['Lịch học hôm nay', 'Lịch thi của tôi', 'Học phí của tôi']
+        ];
+    }
+
+    return ['Mình có thể giúp bạn xem giờ hiện tại, ngày hôm nay hoặc chuyển sang tra cứu lịch học, học phí và điểm nếu bạn muốn.', ['Xem giờ hiện tại', 'Lịch học hôm nay', 'Học phí của tôi']];
 }
 
 function callGemini(string $apiKey, string $userMsg, string $systemPrompt): string {
@@ -526,7 +558,7 @@ function callGemini(string $apiKey, string $userMsg, string $systemPrompt): stri
 function retrieveRagChunks(PDO $pdo, string $question, string $intent, array $entities, ?array $student, int $userMessageId): array {
     appEnsureRagViewShape($pdo);
     $limit = min(5, max(1, (int)appSystemSetting($pdo, 'rag.max_context_chunks', 5)));
-    $minFinalScore = (float)appSystemSetting($pdo, 'rag.min_final_score', 0.62);
+    $minFinalScore = (float)appSystemSetting($pdo, 'rag.min_final_score', 0.58);
 
     $sql = "
         SELECT
@@ -743,12 +775,17 @@ try {
         $finish($reply, ['Deadline gần nhất', 'Thông báo học phí', 'Thông báo lịch thi'], 'ok', 0.92, 'database');
     }
 
+    if ($classification['class'] === 'tien_ich_thoi_gian') {
+        [$reply, $suggestions] = buildUtilityReply($classification['intent']);
+        $finish($reply, $suggestions, 'ok', 1.0, 'utility-time');
+    }
+
     if ($classification['class'] === 'tro_chuyen_thong_thuong') {
-        $reply = 'Chào bạn, mình là ChatBot UTH. Mình có thể hỗ trợ tra cứu điểm, lịch học, lịch thi, học phí và giải đáp kiến thức học vụ đã được kiểm duyệt.';
+        $reply = 'Chào bạn, mình là ChatBot UTH. Mình có thể giúp bạn xem lịch học, lịch thi, học phí, điểm, thông báo và cả những câu hỏi đơn giản như giờ hiện tại hoặc hôm nay là ngày nào.';
         $modelName = 'deterministic';
         if (trim((string)$apiKey) !== '') {
             try {
-                $reply = callGemini($apiKey, $userMessage, "Bạn là ChatBot UTH. Trả lời thân thiện, ngắn gọn bằng tiếng Việt. Không bịa thông tin học vụ, không hỏi hoặc nhắc dữ liệu nhạy cảm.");
+                $reply = callGemini($apiKey, $userMessage, "Bạn là ChatBot UTH. Trả lời thân thiện, tự nhiên, ngắn gọn bằng tiếng Việt. Hãy giống một trợ lý sinh viên thực tế: nói rõ ý chính trước, sau đó mới bổ sung chi tiết nếu cần. Không bịa thông tin học vụ, không hỏi hoặc nhắc dữ liệu nhạy cảm.");
                 $modelName = 'gemini-2.5-flash-lite';
             } catch (Throwable $e) {
                 error_log('Gemini small talk: '.$e->getMessage());
@@ -760,7 +797,8 @@ try {
     [$selectedChunks, $retrievedRows, $threshold] = retrieveRagChunks($pdo, $userMessage, $classification['intent'], $entities, $student, $userMessageId);
     if (!$selectedChunks) {
         appLogUnanswered($pdo, $userMessageId, $userMessage, $classification['intent']);
-        $finish($fallbackMessage, ['Cung cấp thêm học kỳ', 'Cung cấp năm học', 'Tạo ticket hỗ trợ'], 'insufficient_context', 0.0);
+        $reply = '<strong>Mình chưa chắc bạn đang muốn hỏi gì.</strong><br>Để mình hỗ trợ đúng hơn, bạn có thể nói rõ một trong các hướng sau: lịch học, lịch thi, học phí, điểm, thông báo, hoặc nhập lại câu hỏi theo cách ngắn hơn một chút.';
+        $finish($reply, ['Hỏi lịch học', 'Hỏi học phí', 'Hỏi giờ hiện tại'], 'insufficient_context', 0.0);
     }
 
     $contextParts = [];
@@ -773,18 +811,22 @@ try {
     $context = implode("\n\n", $contextParts);
 
     if (trim((string)$apiKey) === '') {
-        $reply = '<strong>Thông tin đã kiểm duyệt</strong><br>'.implode('<br><br>', array_map(
-            fn($row) => e($row['chunk_text']).($row['route_url'] ? '<br><a href="'.e($row['route_url']).'">Xem chi tiết</a>' : ''),
+        $reply = '<strong>Mình đã tìm thấy thông tin phù hợp</strong><br>Mình tóm tắt ngắn gọn từ dữ liệu nội bộ đã kiểm duyệt như sau:<br><br>'.implode('<br><br>', array_map(
+            fn($row) => '<strong>'.e($row['title']).'</strong><br>'.nl2br(e($row['chunk_text']))
+                .($row['route_url'] ? '<br><a href="'.e($row['route_url']).'" target="_blank" rel="noopener">Xem chi tiết</a>' : ''),
             $selectedChunks
-        ));
+        )).'<br><br>Nếu bạn muốn, mình có thể giải thích lại theo cách ngắn hơn hoặc dễ hiểu hơn.';
         $finish($reply, ['Hỏi rõ học kỳ', 'Hỏi năm học', 'Tạo ticket hỗ trợ'], 'ok', (float)$selectedChunks[0]['final_score'], 'database-rag');
     }
 
     try {
-        $systemPrompt = "Bạn là ChatBot UTH. Chỉ trả lời dựa trên CONTEXT đã kiểm duyệt bên dưới. "
-            ."Nếu context không đủ, nói rằng chưa có thông tin đủ chính xác. "
-            ."Không tự đoán về điểm, lịch học, lịch thi, học phí cá nhân. "
-            ."Không yêu cầu hoặc lặp lại CCCD, địa chỉ, password hash, hay toàn bộ hồ sơ sinh viên.\n\nCONTEXT:\n".$context;
+        $systemPrompt = "Bạn là ChatBot UTH, một trợ lý sinh viên thực tế, thân thiện và chủ động. "
+            ."Giữ đúng dữ liệu trong CONTEXT, nhưng phải diễn đạt lại tự nhiên như đang trò chuyện với sinh viên thật, không chép máy móc. "
+            ."Dùng giọng văn gần gũi, xưng hô 'mình/bạn', trả lời ngắn gọn trước rồi mới bổ sung chi tiết nếu cần. "
+            ."Nếu CONTEXT chưa đủ, hãy nói rõ là chưa có đủ thông tin và gợi ý người dùng cung cấp thêm học kỳ, năm học, mã lớp hoặc từ khóa liên quan. "
+            ."Không tự đoán về điểm, lịch học, lịch thi, học phí cá nhân. Không yêu cầu hoặc lặp lại CCCD, địa chỉ, password hash, hay toàn bộ hồ sơ sinh viên. "
+            ."Nếu người dùng chào hỏi hoặc cảm ơn, hãy đáp lại tự nhiên, thân thiện, không máy móc. "
+            ."Ưu tiên một câu trả lời mạch lạc; chỉ dùng gạch đầu dòng khi thực sự cần liệt kê dữ liệu.\n\nCONTEXT:\n".$context;
         $answer = callGemini($apiKey, $userMessage, $systemPrompt);
         if ($answer === '') {
             throw new RuntimeException('Gemini returned empty answer');
