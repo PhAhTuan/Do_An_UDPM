@@ -3,7 +3,8 @@
 /**
  * Kết nối CSDL MySQL với fallback 127.0.0.1 nếu localhost thất bại.
  */
-function connectDatabase(string $db_host, string $db_port, string $db_name, string $db_user, string $db_pass): PDO {
+function connectDatabase(string $db_host, string $db_port, string $db_name, string $db_user, string $db_pass): PDO
+{
     $dsn = "mysql:host={$db_host};port={$db_port};dbname={$db_name};charset=utf8mb4";
     try {
         $pdo = new PDO($dsn, $db_user, $db_pass);
@@ -11,7 +12,8 @@ function connectDatabase(string $db_host, string $db_port, string $db_name, stri
         if ($db_host === 'localhost') {
             $pdo = new PDO(
                 "mysql:host=127.0.0.1;port={$db_port};dbname={$db_name};charset=utf8mb4",
-                $db_user, $db_pass
+                $db_user,
+                $db_pass
             );
         } else {
             throw $e;
@@ -22,83 +24,224 @@ function connectDatabase(string $db_host, string $db_port, string $db_name, stri
     return $pdo;
 }
 
-function dbFetchAll(PDO $pdo, string $sql, array $params = []): array {
+function dbFetchAll(PDO $pdo, string $sql, array $params = []): array
+{
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
-function dbFetchOne(PDO $pdo, string $sql, array $params = []): ?array {
+function dbFetchOne(PDO $pdo, string $sql, array $params = []): ?array
+{
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     $row = $stmt->fetch(PDO::FETCH_ASSOC);
     return $row === false ? null : $row;
 }
 
-function dbFetchValue(PDO $pdo, string $sql, array $params = []) {
+function dbFetchValue(PDO $pdo, string $sql, array $params = [])
+{
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return $stmt->fetchColumn();
 }
 
-function dbExecute(PDO $pdo, string $sql, array $params = []): int {
+function dbExecute(PDO $pdo, string $sql, array $params = []): int
+{
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
     return $stmt->rowCount();
 }
 
-function appStripAccents(string $s): string {
+
+function appTableExists(PDO $pdo, string $tableName): bool
+{
+    $stmt = $pdo->prepare("
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_schema = DATABASE()
+          AND table_name = ?
+    ");
+    $stmt->execute([$tableName]);
+    return (int)$stmt->fetchColumn() > 0;
+}
+
+function appStripAccents(string $s): string
+{
     static $m = [
-        'à'=>'a','á'=>'a','ạ'=>'a','ả'=>'a','ã'=>'a','â'=>'a','ầ'=>'a','ấ'=>'a','ậ'=>'a','ẩ'=>'a','ẫ'=>'a',
-        'ă'=>'a','ằ'=>'a','ắ'=>'a','ặ'=>'a','ẳ'=>'a','ẵ'=>'a',
-        'è'=>'e','é'=>'e','ẹ'=>'e','ẻ'=>'e','ẽ'=>'e','ê'=>'e','ề'=>'e','ế'=>'e','ệ'=>'e','ể'=>'e','ễ'=>'e',
-        'ì'=>'i','í'=>'i','ị'=>'i','ỉ'=>'i','ĩ'=>'i',
-        'ò'=>'o','ó'=>'o','ọ'=>'o','ỏ'=>'o','õ'=>'o','ô'=>'o','ồ'=>'o','ố'=>'o','ộ'=>'o','ổ'=>'o','ỗ'=>'o',
-        'ơ'=>'o','ờ'=>'o','ớ'=>'o','ợ'=>'o','ở'=>'o','ỡ'=>'o',
-        'ù'=>'u','ú'=>'u','ụ'=>'u','ủ'=>'u','ũ'=>'u','ư'=>'u','ừ'=>'u','ứ'=>'u','ự'=>'u','ử'=>'u','ữ'=>'u',
-        'ỳ'=>'y','ý'=>'y','ỵ'=>'y','ỷ'=>'y','ỹ'=>'y','đ'=>'d',
-        'À'=>'A','Á'=>'A','Ạ'=>'A','Ả'=>'A','Ã'=>'A','Â'=>'A','Ầ'=>'A','Ấ'=>'A','Ậ'=>'A','Ẩ'=>'A','Ẫ'=>'A',
-        'Ă'=>'A','Ằ'=>'A','Ắ'=>'A','Ặ'=>'A','Ẳ'=>'A','Ẵ'=>'A',
-        'È'=>'E','É'=>'E','Ẹ'=>'E','Ẻ'=>'E','Ẽ'=>'E','Ê'=>'E','Ề'=>'E','Ế'=>'E','Ệ'=>'E','Ể'=>'E','Ễ'=>'E',
-        'Ì'=>'I','Í'=>'I','Ị'=>'I','Ỉ'=>'I','Ĩ'=>'I',
-        'Ò'=>'O','Ó'=>'O','Ọ'=>'O','Ỏ'=>'O','Õ'=>'O','Ô'=>'O','Ồ'=>'O','Ố'=>'O','Ộ'=>'O','Ổ'=>'O','Ỗ'=>'O',
-        'Ơ'=>'O','Ờ'=>'O','Ớ'=>'O','Ợ'=>'O','Ở'=>'O','Ỡ'=>'O',
-        'Ù'=>'U','Ú'=>'U','Ụ'=>'U','Ủ'=>'U','Ũ'=>'U','Ư'=>'U','Ừ'=>'U','Ứ'=>'U','Ự'=>'U','Ử'=>'U','Ữ'=>'U',
-        'Ỳ'=>'Y','Ý'=>'Y','Ỵ'=>'Y','Ỷ'=>'Y','Ỹ'=>'Y','Đ'=>'D',
+        'à' => 'a',
+        'á' => 'a',
+        'ạ' => 'a',
+        'ả' => 'a',
+        'ã' => 'a',
+        'â' => 'a',
+        'ầ' => 'a',
+        'ấ' => 'a',
+        'ậ' => 'a',
+        'ẩ' => 'a',
+        'ẫ' => 'a',
+        'ă' => 'a',
+        'ằ' => 'a',
+        'ắ' => 'a',
+        'ặ' => 'a',
+        'ẳ' => 'a',
+        'ẵ' => 'a',
+        'è' => 'e',
+        'é' => 'e',
+        'ẹ' => 'e',
+        'ẻ' => 'e',
+        'ẽ' => 'e',
+        'ê' => 'e',
+        'ề' => 'e',
+        'ế' => 'e',
+        'ệ' => 'e',
+        'ể' => 'e',
+        'ễ' => 'e',
+        'ì' => 'i',
+        'í' => 'i',
+        'ị' => 'i',
+        'ỉ' => 'i',
+        'ĩ' => 'i',
+        'ò' => 'o',
+        'ó' => 'o',
+        'ọ' => 'o',
+        'ỏ' => 'o',
+        'õ' => 'o',
+        'ô' => 'o',
+        'ồ' => 'o',
+        'ố' => 'o',
+        'ộ' => 'o',
+        'ổ' => 'o',
+        'ỗ' => 'o',
+        'ơ' => 'o',
+        'ờ' => 'o',
+        'ớ' => 'o',
+        'ợ' => 'o',
+        'ở' => 'o',
+        'ỡ' => 'o',
+        'ù' => 'u',
+        'ú' => 'u',
+        'ụ' => 'u',
+        'ủ' => 'u',
+        'ũ' => 'u',
+        'ư' => 'u',
+        'ừ' => 'u',
+        'ứ' => 'u',
+        'ự' => 'u',
+        'ử' => 'u',
+        'ữ' => 'u',
+        'ỳ' => 'y',
+        'ý' => 'y',
+        'ỵ' => 'y',
+        'ỷ' => 'y',
+        'ỹ' => 'y',
+        'đ' => 'd',
+        'À' => 'A',
+        'Á' => 'A',
+        'Ạ' => 'A',
+        'Ả' => 'A',
+        'Ã' => 'A',
+        'Â' => 'A',
+        'Ầ' => 'A',
+        'Ấ' => 'A',
+        'Ậ' => 'A',
+        'Ẩ' => 'A',
+        'Ẫ' => 'A',
+        'Ă' => 'A',
+        'Ằ' => 'A',
+        'Ắ' => 'A',
+        'Ặ' => 'A',
+        'Ẳ' => 'A',
+        'Ẵ' => 'A',
+        'È' => 'E',
+        'É' => 'E',
+        'Ẹ' => 'E',
+        'Ẻ' => 'E',
+        'Ẽ' => 'E',
+        'Ê' => 'E',
+        'Ề' => 'E',
+        'Ế' => 'E',
+        'Ệ' => 'E',
+        'Ể' => 'E',
+        'Ễ' => 'E',
+        'Ì' => 'I',
+        'Í' => 'I',
+        'Ị' => 'I',
+        'Ỉ' => 'I',
+        'Ĩ' => 'I',
+        'Ò' => 'O',
+        'Ó' => 'O',
+        'Ọ' => 'O',
+        'Ỏ' => 'O',
+        'Õ' => 'O',
+        'Ô' => 'O',
+        'Ồ' => 'O',
+        'Ố' => 'O',
+        'Ộ' => 'O',
+        'Ổ' => 'O',
+        'Ỗ' => 'O',
+        'Ơ' => 'O',
+        'Ờ' => 'O',
+        'Ớ' => 'O',
+        'Ợ' => 'O',
+        'Ở' => 'O',
+        'Ỡ' => 'O',
+        'Ù' => 'U',
+        'Ú' => 'U',
+        'Ụ' => 'U',
+        'Ủ' => 'U',
+        'Ũ' => 'U',
+        'Ư' => 'U',
+        'Ừ' => 'U',
+        'Ứ' => 'U',
+        'Ự' => 'U',
+        'Ử' => 'U',
+        'Ữ' => 'U',
+        'Ỳ' => 'Y',
+        'Ý' => 'Y',
+        'Ỵ' => 'Y',
+        'Ỷ' => 'Y',
+        'Ỹ' => 'Y',
+        'Đ' => 'D',
     ];
     return strtr($s, $m);
 }
 
-function appNormalizeText(string $value): string {
+function appNormalizeText(string $value): string
+{
     $value = mb_strtolower(appStripAccents($value), 'UTF-8');
     $value = preg_replace('/[^a-z0-9]+/u', ' ', $value);
     return trim(preg_replace('/\s+/u', ' ', $value));
 }
 
-function appContainsAny(string $normalized, array $phrases): bool {
-    $haystack = ' '.$normalized.' ';
+function appContainsAny(string $normalized, array $phrases): bool
+{
+    $haystack = ' ' . $normalized . ' ';
     foreach ($phrases as $phrase) {
         $needle = appNormalizeText($phrase);
-        if ($needle !== '' && mb_strpos($haystack, ' '.$needle.' ', 0, 'UTF-8') !== false) {
+        if ($needle !== '' && mb_strpos($haystack, ' ' . $needle . ' ', 0, 'UTF-8') !== false) {
             return true;
         }
     }
     return false;
 }
 
-function appDateOrNull(?string $value): ?string {
+function appDateOrNull(?string $value): ?string
+{
     $value = trim((string)$value);
     return $value === '' ? null : $value;
 }
 
-function appExtractYear(?string $value): ?int {
+function appExtractYear(?string $value): ?int
+{
     if (preg_match('/(20\d{2})/', (string)$value, $m)) {
         return (int)$m[1];
     }
     return null;
 }
 
-function appGenderToDb(?string $value): ?string {
+function appGenderToDb(?string $value): ?string
+{
     $norm = appNormalizeText((string)$value);
     if ($norm === 'nam' || $norm === 'male') return 'male';
     if ($norm === 'nu' || $norm === 'female') return 'female';
@@ -106,7 +249,8 @@ function appGenderToDb(?string $value): ?string {
     return null;
 }
 
-function appGenderLabel(?string $value): string {
+function appGenderLabel(?string $value): string
+{
     return match ($value) {
         'male' => 'Nam',
         'female' => 'Nữ',
@@ -115,7 +259,8 @@ function appGenderLabel(?string $value): string {
     };
 }
 
-function appDegreeToDb(?string $value): string {
+function appDegreeToDb(?string $value): string
+{
     $norm = appNormalizeText((string)$value);
     if (str_contains($norm, 'cao dang')) return 'college';
     if (str_contains($norm, 'thac')) return 'master';
@@ -124,7 +269,8 @@ function appDegreeToDb(?string $value): string {
     return 'bachelor';
 }
 
-function appDegreeLabel(?string $value): string {
+function appDegreeLabel(?string $value): string
+{
     return match ($value) {
         'college' => 'Cao đẳng',
         'engineer' => 'Kỹ sư',
@@ -134,14 +280,16 @@ function appDegreeLabel(?string $value): string {
     };
 }
 
-function appUuidV4(): string {
+function appUuidV4(): string
+{
     $data = random_bytes(16);
     $data[6] = chr((ord($data[6]) & 0x0f) | 0x40);
     $data[8] = chr((ord($data[8]) & 0x3f) | 0x80);
     return vsprintf('%s%s-%s-%s-%s-%s%s%s', str_split(bin2hex($data), 4));
 }
 
-function appSystemSetting(PDO $pdo, string $key, $default = null) {
+function appSystemSetting(PDO $pdo, string $key, $default = null)
+{
     $json = dbFetchValue($pdo, 'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1', [$key]);
     if ($json === false || $json === null) {
         return $default;
@@ -159,15 +307,17 @@ function appSystemSetting(PDO $pdo, string $key, $default = null) {
     return $data ?: $default;
 }
 
-function appRoleId(PDO $pdo, string $code): int {
+function appRoleId(PDO $pdo, string $code): int
+{
     $id = dbFetchValue($pdo, 'SELECT id FROM roles WHERE code = ? LIMIT 1', [$code]);
     if (!$id) {
-        throw new RuntimeException('Không tìm thấy role: '.$code);
+        throw new RuntimeException('Không tìm thấy role: ' . $code);
     }
     return (int)$id;
 }
 
-function appFindUserForLogin(PDO $pdo, string $username): ?array {
+function appFindUserForLogin(PDO $pdo, string $username): ?array
+{
     return dbFetchOne($pdo, "
         SELECT
             u.id, u.username, u.password_hash, u.full_name, u.avatar_url, u.status,
@@ -182,12 +332,14 @@ function appFindUserForLogin(PDO $pdo, string $username): ?array {
     ", [$username]);
 }
 
-function appProgramCode(string $name, string $specialization, string $degree, string $educationType): string {
-    $base = appNormalizeText($name.' '.$specialization.' '.$degree.' '.$educationType);
-    return 'PG'.strtoupper(substr(sha1($base !== '' ? $base : 'uth-program'), 0, 10));
+function appProgramCode(string $name, string $specialization, string $degree, string $educationType): string
+{
+    $base = appNormalizeText($name . ' ' . $specialization . ' ' . $degree . ' ' . $educationType);
+    return 'PG' . strtoupper(substr(sha1($base !== '' ? $base : 'uth-program'), 0, 10));
 }
 
-function appFindOrCreateProgram(PDO $pdo, string $name, string $specialization = '', string $degreeLabel = '', string $educationType = ''): ?int {
+function appFindOrCreateProgram(PDO $pdo, string $name, string $specialization = '', string $degreeLabel = '', string $educationType = ''): ?int
+{
     $name = trim($name);
     if ($name === '') {
         return null;
@@ -217,11 +369,12 @@ function appFindOrCreateProgram(PDO $pdo, string $name, string $specialization =
     return (int)$pdo->lastInsertId();
 }
 
-function appDecorateStudentRow(array $row): array {
+function appDecorateStudentRow(array $row): array
+{
     $row['mssv'] = $row['student_code'] ?? $row['username'] ?? '';
     $row['gioi_tinh'] = appGenderLabel($row['gender'] ?? null);
     $row['bac_dao_tao'] = appDegreeLabel($row['degree_level'] ?? null);
-    $row['khoa_hoc'] = !empty($row['cohort_year']) ? 'Khóa '.$row['cohort_year'] : '';
+    $row['khoa_hoc'] = !empty($row['cohort_year']) ? 'Khóa ' . $row['cohort_year'] : '';
     $row['ngay_sinh'] = $row['date_of_birth'] ?? '';
     $row['noi_sinh'] = $row['place_of_birth'] ?? '';
     $row['nganh'] = $row['program_name'] ?? '';
@@ -232,7 +385,8 @@ function appDecorateStudentRow(array $row): array {
     return $row;
 }
 
-function appStudentByUserId(PDO $pdo, int $userId): ?array {
+function appStudentByUserId(PDO $pdo, int $userId): ?array
+{
     $row = dbFetchOne($pdo, "
         SELECT
             u.id AS user_id, u.username, u.full_name, u.avatar_url, u.status,
@@ -252,7 +406,8 @@ function appStudentByUserId(PDO $pdo, int $userId): ?array {
     return $row ? appDecorateStudentRow($row) : null;
 }
 
-function appStudentByCode(PDO $pdo, string $studentCode): ?array {
+function appStudentByCode(PDO $pdo, string $studentCode): ?array
+{
     $row = dbFetchOne($pdo, "
         SELECT
             u.id AS user_id, u.username, u.full_name, u.avatar_url, u.status,
@@ -272,7 +427,8 @@ function appStudentByCode(PDO $pdo, string $studentCode): ?array {
     return $row ? appDecorateStudentRow($row) : null;
 }
 
-function appSafeStudentList(PDO $pdo): array {
+function appSafeStudentList(PDO $pdo): array
+{
     $rows = dbFetchAll($pdo, "
         SELECT
             u.id AS user_id, u.username, u.full_name, u.avatar_url, u.status, u.created_at,
@@ -290,12 +446,19 @@ function appSafeStudentList(PDO $pdo): array {
     return array_map('appDecorateStudentRow', $rows);
 }
 
-function appEnsureChatSession(PDO $pdo, ?string $sessionUuid, ?int $userId, string $title = 'Trò chuyện UTH'): array {
+function appEnsureChatSession(PDO $pdo, ?string $sessionUuid, ?int $userId, string $title = 'Trò chuyện UTH'): array
+{
     if ($sessionUuid && preg_match('/^[0-9a-fA-F-]{36}$/', $sessionUuid)) {
         $existing = dbFetchOne($pdo, 'SELECT * FROM chat_sessions WHERE session_uuid = ? LIMIT 1', [$sessionUuid]);
         if ($existing) {
-            dbExecute($pdo, 'UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = ?', [(int)$existing['id']]);
-            return $existing;
+            $existingUserId = $existing['user_id'] !== null ? (int)$existing['user_id'] : null;
+
+            // Chỉ được tiếp tục một phiên chat nếu phiên đó thuộc đúng người đang đăng nhập.
+            // Nếu UUID đến từ localStorage của tài khoản khác, bỏ qua và tạo phiên mới.
+            if ($existingUserId === $userId) {
+                dbExecute($pdo, 'UPDATE chat_sessions SET last_activity_at = NOW() WHERE id = ?', [(int)$existing['id']]);
+                return $existing;
+            }
         }
     }
 
@@ -352,7 +515,8 @@ function appLogChatMessage(
     return (int)$pdo->lastInsertId();
 }
 
-function appLogUnanswered(PDO $pdo, ?int $userMessageId, string $question, ?string $intent): void {
+function appLogUnanswered(PDO $pdo, ?int $userMessageId, string $question, ?string $intent): void
+{
     $normalized = appNormalizeText($question);
     if ($normalized === '') {
         return;
@@ -384,11 +548,13 @@ function appLogUnanswered(PDO $pdo, ?int $userMessageId, string $question, ?stri
     ", [$userMessageId, $normalized, $intent]);
 }
 
-function appTicketNumber(): string {
-    return 'TK'.date('YmdHis').random_int(100, 999);
+function appTicketNumber(): string
+{
+    return 'TK' . date('YmdHis') . random_int(100, 999);
 }
 
-function appCreateSupportTicket(PDO $pdo, ?array $student, string $subject, string $description, ?int $chatSessionId = null): int {
+function appCreateSupportTicket(PDO $pdo, ?array $student, string $subject, string $description, ?int $chatSessionId = null): int
+{
     $studentId = isset($student['student_id']) ? (int)$student['student_id'] : null;
     $name = trim((string)($student['ho_ten'] ?? $student['full_name'] ?? 'Khách truy cập'));
     $code = trim((string)($student['mssv'] ?? $student['student_code'] ?? ''));
@@ -404,7 +570,8 @@ function appCreateSupportTicket(PDO $pdo, ?array $student, string $subject, stri
     return (int)$pdo->lastInsertId();
 }
 
-function appEnsureRagViewShape(PDO $pdo): void {
+function appEnsureRagViewShape(PDO $pdo): void
+{
     static $done = false;
     if ($done) {
         return;
@@ -451,7 +618,8 @@ function appEnsureRagViewShape(PDO $pdo): void {
 /**
  * Phát hiện schema thực tế của bảng faq (hỗ trợ nhiều tên cột).
  */
-function faqColumnSchema(PDO $pdo): array {
+function faqColumnSchema(PDO $pdo): array
+{
     $rows = dbFetchAll($pdo, "SHOW COLUMNS FROM faq");
     $columns = array_column($rows, 'Field');
 
@@ -478,11 +646,13 @@ function faqColumnSchema(PDO $pdo): array {
     throw new RuntimeException('Bảng faq thiếu cột câu hỏi/câu trả lời hợp lệ.');
 }
 
-function quoteIdentifier(string $identifier): string {
+function quoteIdentifier(string $identifier): string
+{
     return '`' . str_replace('`', '``', $identifier) . '`';
 }
 
-function faqSelectSql(array $schema, string $orderBy = 'id DESC'): string {
+function faqSelectSql(array $schema, string $orderBy = 'id DESC'): string
+{
     $keyword = quoteIdentifier($schema['keyword']) . ' AS tu_khoa';
     $answer  = quoteIdentifier($schema['answer'])  . ' AS noi_dung';
     $link    = $schema['link']  ? quoteIdentifier($schema['link'])  . ' AS link_dieu_huong' : "'' AS link_dieu_huong";
@@ -490,7 +660,8 @@ function faqSelectSql(array $schema, string $orderBy = 'id DESC'): string {
     return "SELECT id, {$topic}, {$keyword}, {$answer}, {$link} FROM faq ORDER BY {$orderBy}";
 }
 
-function faqInsertSql(array $schema): string {
+function faqInsertSql(array $schema): string
+{
     $columns = [];
     $values  = [];
 
@@ -516,7 +687,8 @@ function faqInsertSql(array $schema): string {
     return 'INSERT INTO faq (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $values) . ')';
 }
 
-function faqUpdateSql(array $schema): string {
+function faqUpdateSql(array $schema): string
+{
     $sets = [];
     if ($schema['topic']) $sets[] = quoteIdentifier($schema['topic']) . ' = ?';
     $sets[] = quoteIdentifier($schema['keyword']) . ' = ?';
@@ -525,7 +697,8 @@ function faqUpdateSql(array $schema): string {
     return 'UPDATE faq SET ' . implode(', ', $sets) . ' WHERE id = ?';
 }
 
-function faqFormParams(array $schema, string $topic, string $keyword, string $answer, string $link = ''): array {
+function faqFormParams(array $schema, string $topic, string $keyword, string $answer, string $link = ''): array
+{
     $params = [];
     if ($schema['topic']) $params[] = trim($topic) !== '' ? trim($topic) : 'Chưa phân loại';
     $params[] = $keyword;
@@ -534,7 +707,8 @@ function faqFormParams(array $schema, string $topic, string $keyword, string $an
     return $params;
 }
 
-function ensureFaqKnowledgeTable(PDO $pdo): void {
+function ensureFaqKnowledgeTable(PDO $pdo): void
+{
     dbExecute($pdo, "
         CREATE TABLE IF NOT EXISTS `faq` (
             `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -550,9 +724,10 @@ function ensureFaqKnowledgeTable(PDO $pdo): void {
     ");
 }
 
-function seedFaqKnowledgeFromSqlFile(PDO $pdo, string $sqlPath): int {
+function seedFaqKnowledgeFromSqlFile(PDO $pdo, string $sqlPath): int
+{
     if (!is_file($sqlPath)) {
-        throw new RuntimeException('Không tìm thấy file seed FAQ: '.$sqlPath);
+        throw new RuntimeException('Không tìm thấy file seed FAQ: ' . $sqlPath);
     }
 
     ensureFaqKnowledgeTable($pdo);

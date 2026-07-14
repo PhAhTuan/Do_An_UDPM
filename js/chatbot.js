@@ -1,12 +1,30 @@
 // ==========================================
 // 1. QUẢN LÝ LỊCH SỬ TRÒ CHUYỆN (SESSIONS)
 // ==========================================
-const CHAT_STORAGE_VERSION = '2026-07-10-navigation-fixes-v3';
+const CHAT_STORAGE_VERSION = '2026-07-14-user-scoped-sessions-v4';
 const CHAT_STORAGE_VERSION_KEY = 'uth_chat_storage_version';
-if (localStorage.getItem(CHAT_STORAGE_VERSION_KEY) !== CHAT_STORAGE_VERSION) {
+const CHAT_STORAGE_OWNER_KEY = 'uth_chat_storage_owner';
+const currentChatOwner = String(
+    (window.UTH_CONTEXT && (window.UTH_CONTEXT.userId || window.UTH_CONTEXT.mssv)) || ''
+);
+
+function clearStoredChatState() {
     localStorage.removeItem('uth_chat_sessions');
     localStorage.removeItem('uth_current_session');
+}
+
+if (localStorage.getItem(CHAT_STORAGE_VERSION_KEY) !== CHAT_STORAGE_VERSION) {
+    clearStoredChatState();
     localStorage.setItem(CHAT_STORAGE_VERSION_KEY, CHAT_STORAGE_VERSION);
+}
+
+// Mỗi tài khoản chỉ dùng lịch sử/local session của chính mình trên cùng trình duyệt.
+if (currentChatOwner) {
+    const storedOwner = localStorage.getItem(CHAT_STORAGE_OWNER_KEY);
+    if (storedOwner !== currentChatOwner) {
+        clearStoredChatState();
+        localStorage.setItem(CHAT_STORAGE_OWNER_KEY, currentChatOwner);
+    }
 }
 
 function readStoredChatSessions() {
