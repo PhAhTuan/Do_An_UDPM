@@ -277,11 +277,7 @@ function refineClassificationWithSession(PDO $pdo, int $sessionId, string $messa
         return $classification;
     }
 
-    $looksLikeFollowUp = appContainsAny($norm, [
-        'vay con', 'con mon', 'mon do', 'mon nay', 'cai do', 'cai nay',
-        'diem nay', 'diem do', 'ngay mai thi sao', 'hom nay thi sao',
-        'phong nao', 'may gio', 'bao nhieu', 'con no', 'da dong chua',
-    ]);
+    $looksLikeFollowUp = appContainsAny($norm,['con','vay','the','roi sao','sau do','tiep','con nua','con mon','mon do','mon nay','cai do','cai nay','no','no thi sao','vay con','con sao','bao gio','bao lau','khi nao','o dau','co duoc khong','co khong','duoc khong','diem nay','diem do','hoc ky do','hk do','ngay mai','hom nay','phong nao','may gio','bao nhieu','con no','da dong chua']);
     if (!$looksLikeFollowUp) {
         return $classification;
     }
@@ -363,13 +359,17 @@ function chatTextForGemini(string $content): string {
     return trim($content);
 }
 
-function buildGeminiHistory(PDO $pdo, int $sessionId, int $beforeMessageId, int $limit = 4): array {
-    $limit = max(0, min(10, $limit));
+function buildGeminiHistory(PDO $pdo, int $sessionId, int $beforeMessageId, int $limit = 10): array
+{
+    $limit = max(0, min(60, $limit));
+
     if ($limit === 0) {
         return [];
     }
 
-    $recentMessages = dbFetchAll($pdo, "
+    $recentMessages = dbFetchAll(
+        $pdo,
+        "
         SELECT sender_type, content
         FROM chat_messages
         WHERE session_id = ?
@@ -377,35 +377,62 @@ function buildGeminiHistory(PDO $pdo, int $sessionId, int $beforeMessageId, int 
           AND sender_type IN ('user', 'assistant')
         ORDER BY id DESC
         LIMIT {$limit}
-    ", [$sessionId, $beforeMessageId]);
+        ",
+        [$sessionId, $beforeMessageId]
+    );
 
     $history = [];
+
     foreach (array_reverse($recentMessages) as $msg) {
+
         $content = chatTextForGemini((string)($msg['content'] ?? ''));
+
         if ($content === '') {
             continue;
         }
+
+        $skipTexts = [
+            'Xin lỗi',
+            'Có lỗi',
+            'Hệ thống đang bận',
+            'Đã xảy ra lỗi'
+        ];
+
+        $shouldSkip = false;
+
+        foreach ($skipTexts as $text) {
+            if (stripos($content, $text) !== false) {
+                $shouldSkip = true;
+                break;
+            }
+        }
+
+        if ($shouldSkip) {
+            continue;
+        }
+
         $history[] = [
             'role' => ($msg['sender_type'] === 'user') ? 'user' : 'model',
-            'content' => mb_substr($content, 0, 1800, 'UTF-8'),
+            'content' => mb_substr(trim($content), 0, 2500, 'UTF-8'),
         ];
     }
+
     return $history;
 }
 
-function shouldUseGeminiHistoryForQuestion(array $classification, string $message): bool {
-    $norm = appNormalizeText($message);
-    if (($classification['class'] ?? '') !== 'kien_thuc_hoc_vu') {
-        return false;
-    }
-    if (questionIntroducesNewKnowledgeTopic($norm)) {
-        return false;
-    }
-    return appContainsAny($norm, [
-        'vay con', 'con cai do', 'cai do', 'cai nay', 'van de do',
-        'thi sao', 'nhu vay', 'bao nhieu', 'co duoc khong',
-    ]);
-}
+// function shouldUseGeminiHistoryForQuestion(array $classification, string $message): bool {
+//     $norm = appNormalizeText($message);
+//     if (($classification['class'] ?? '') !== 'kien_thuc_hoc_vu') {
+//         return false;
+//     }
+//     if (questionIntroducesNewKnowledgeTopic($norm)) {
+//         return false;
+//     }
+//     return appContainsAny($norm, [
+//         'vay con', 'con cai do', 'cai do', 'cai nay', 'van de do',
+//         'thi sao', 'nhu vay', 'bao nhieu', 'co duoc khong',
+//     ]);
+// }
 
 function exactQuestionPhraseScore(string $question, string $phrases): float {
     $questionNorm = appNormalizeText($question);
@@ -1323,28 +1350,41 @@ function buildUtilityReply(string $intent): array {
     return ['Mình có thể giúp bạn xem giờ hiện tại, ngày hôm nay hoặc chuyển sang tra cứu lịch học, học phí và điểm nếu bạn muốn.', ['Xem giờ hiện tại', 'Lịch học hôm nay', 'Học phí của tôi']];
 }
 
-function callGemini(string $apiKey, string $userMsg, string $systemPrompt): string {
+function callGemini(string $apiKey, string $userMsg, string $systemPrompt, array $history = []): string {
     $apiUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key='.rawurlencode($apiKey);
     $contents = [];
-    foreach ($history as $msg) {
-        $role = ($msg['role'] ?? '') === 'model' ? 'model' : 'user';
-        $content = trim((string)($msg['content'] ?? ''));
-        if ($content === '') {
-            continue;
-        }
-        $contents[] = [
-            'role' => $role,
-            'parts' => [['text' => $content]],
-        ];
-    }
-    $contents[] = ['role' => 'user', 'parts' => [['text' => $userMsg]]];
+
+foreach ($history as $msg) {
+
+    $role = $msg['role'] === 'assistant'
+        ? 'model'
+        : 'user';
+
+    $contents[] = [
+        'role' => $role,
+        'parts' => [
+            [
+                'text' => $msg['content']
+            ]
+        ]
+    ];
+}
+
+$contents[] = [
+    'role' => 'user',
+    'parts' => [
+        [
+            'text' => $userMsg
+        ]
+    ]
+];
 
     $payload = [
         'systemInstruction' => ['role' => 'user', 'parts' => [['text' => $systemPrompt]]],
         'contents' => $contents,
         'generationConfig' => [
-            'temperature' => 0.1,
-            'maxOutputTokens' => 800,
+            'temperature' => 0.3,
+            'maxOutputTokens' => 1200,
         ],
     ];
 
@@ -1685,12 +1725,36 @@ try {
         $classification['intent'],
         $entities
     );
-    $geminiHistory = shouldUseGeminiHistoryForQuestion($classification, $userMessage)
-        ? buildGeminiHistory($pdo, (int)$chatSession['id'], $userMessageId, 4)
-        : [];
+    $geminiHistory = buildGeminiHistory(
+    $pdo,
+    (int)$chatSession['id'],
+    $userMessageId,
+    60
+);
     $personalContext = $classification['class'] === 'du_lieu_ca_nhan_sinh_vien'
         ? buildStudentPromptContext($pdo, $student, $classification['intent'], $entities)
         : '';
+        $conversationSummary = "";
+
+foreach ($geminiHistory as $item) {
+
+    $role = $item['role'] === 'model'
+        ? "Assistant"
+        : "User";
+
+    $conversationSummary .=
+        $role . ": " .
+        trim($item['content']) .
+        "\n";
+
+}
+
+$conversationSummary = mb_substr(
+    $conversationSummary,
+    -5000,
+    null,
+    "UTF-8"
+);
 
     $finish = function (
         string $reply,
@@ -1807,7 +1871,37 @@ try {
         $modelName = 'deterministic';
         if (trim((string)$apiKey) !== '') {
             try {
-                $reply = callGemini($apiKey, $userMessage, "Bạn là ChatBot UTH. Trả lời thân thiện, tự nhiên, ngắn gọn bằng tiếng Việt. Hãy giống một trợ lý sinh viên thực tế: nói rõ ý chính trước, sau đó mới bổ sung chi tiết nếu cần. Không bịa thông tin học vụ, không hỏi hoặc nhắc dữ liệu nhạy cảm.");
+                $systemPrompt = "
+
+Đây là lịch sử hội thoại.
+
+".$conversationSummary."
+
+QUY TẮC
+
+Đây là MỘT cuộc hội thoại liên tục.
+
+Không được coi mỗi câu hỏi là cuộc trò chuyện mới.
+
+Nếu người dùng hỏi:
+
+- còn
+- vậy
+- thế
+- bao lâu
+- khi nào
+- môn đó
+- học kỳ đó
+- nó
+- cái đó
+- vậy còn
+
+thì phải hiểu theo lịch sử phía trên.
+
+Không yêu cầu sinh viên hỏi lại từ đầu.
+";
+
+                $reply = callGemini($apiKey, $userMessage, $systemPrompt, $geminiHistory);
                 $modelName = 'gemini-2.5-flash-lite';
             } catch (Throwable $e) {
                 error_log('Gemini small talk: '.$e->getMessage());
@@ -1850,7 +1944,7 @@ try {
             ."Không tự đoán về điểm, lịch học, lịch thi, học phí cá nhân. Không yêu cầu hoặc lặp lại CCCD, địa chỉ, password hash, hay toàn bộ hồ sơ sinh viên. "
             ."Nếu người dùng chào hỏi hoặc cảm ơn, hãy đáp lại tự nhiên, thân thiện, không máy móc. "
             ."Ưu tiên một câu trả lời mạch lạc; chỉ dùng gạch đầu dòng khi thực sự cần liệt kê dữ liệu.\n\nCONTEXT:\n".$context;
-        $answer = callGemini($apiKey, $userMessage, $systemPrompt);
+        $answer = callGemini($apiKey, $userMessage, $systemPrompt, $geminiHistory);
         if ($answer === '') {
             throw new RuntimeException('Gemini returned empty answer');
         }
