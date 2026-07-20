@@ -788,16 +788,19 @@ function uploadAvatar() {
 
 <!-- ===== CHATBOT WIDGET ===== -->
 <div class="bot-widget" id="botWidget">
-  <button class="bot-launcher" id="botLauncher" aria-label="Mở chatbot Bảo Bảo">💬</button>
+  <button class="bot-launcher" id="botLauncher" aria-label="Mở chatbot Bảo Bảo">Chat</button>
 
     <div class="bot-window" id="botWindow">
       <!-- SIDEBAR HISTORY -->
       <div class="bot-sidebar" id="botSidebar">
         <div class="sidebar-header">
           <span style="font-weight:600; color:#fff;">Lịch sử trò chuyện</span>
-          <button class="bot-btn-sm" onclick="toggleHistory()" style="font-size:16px;">✕</button>
+          <button class="bot-btn-sm" onclick="toggleHistory()" style="font-size:12px; width:auto; padding:0 8px;">Đóng</button>
         </div>
-        <button class="new-chat-btn" onclick="startNewChat()">+ Trò chuyện mới</button>
+        <div class="history-actions">
+          <button class="new-chat-btn" onclick="startNewChat()">+ Trò chuyện mới</button>
+          <button class="clear-chat-btn" onclick="deleteAllChatHistory()">Xóa tất cả</button>
+        </div>
         <div class="history-list" id="historyList">
           <!-- History items will be populated by JS -->
         </div>
@@ -813,21 +816,16 @@ function uploadAvatar() {
         <div class="bot-head-acts">
           <button class="bot-btn-sm" id="historyToggleBtn" title="Lịch sử trò chuyện" onclick="toggleHistory()" style="font-size:12px; font-weight:600; width:auto; padding:0 8px;">Lịch sử</button>
           <button class="bot-btn-sm bot-voice-toggle" id="voiceToggleBtn" type="button" title="Tự đọc câu trả lời: tắt" aria-label="Bật hoặc tắt tự đọc câu trả lời" aria-pressed="false" onclick="toggleVoiceMode()">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"></path>
-              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"></path>
-            </svg>
             <span>Đọc</span>
           </button>
-          <button class="bot-btn-sm" id="expandChatBtn" title="Mở rộng" onclick="expandChatbot()" style="font-size:16px;">⛶</button>
-          <button class="bot-btn-sm" id="closeChatBtn" title="Đóng">✕</button>
+          <button class="bot-btn-sm" id="expandChatBtn" title="Mở rộng" onclick="expandChatbot()" style="font-size:12px; width:auto; padding:0 8px;">Rộng</button>
+          <button class="bot-btn-sm" id="closeChatBtn" title="Đóng" style="font-size:12px; width:auto; padding:0 8px;">Đóng</button>
         </div>
       </div>
 
       <div class="bot-body" id="chatBody">
         <div class="chat-msg bot">
-          Chào <?php echo dashH($hoTen); ?>! 👋 Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
+          Chào <?php echo dashH($hoTen); ?>! Mình là <strong>ChatBot UTH</strong>. Mình có thể giúp gì cho bạn?
         </div>
         <div class="chat-suggestions" id="chatSuggestions">
           <button class="suggestion-chip" onclick="sendQuickMessage('Cho tôi xem kết quả học tập')">Xem điểm</button>
@@ -843,16 +841,190 @@ function uploadAvatar() {
   </div>
 </div>
 
-<!-- ===== TICKET MODAL ===== -->
-<div class="modal-overlay" id="ticketModal">
-  <div class="modal-box">
-    <div class="modal-title" id="modalTitle">Phản hồi từ Ban quản trị</div>
-    <div class="modal-body" id="modalBody"></div>
-    <form method="POST" action="dashboard.php">
-      <input type="hidden" name="action" value="mark_read">
-      <input type="hidden" name="ticket_id" id="modalTicketId">
-      <button type="submit" class="modal-close">Đã hiểu</button>
-    </form>
+<!-- ===== TICKET MODAL (2 chiều) ===== -->
+<style>
+.tkm-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  z-index: 3000;
+  align-items: center;
+  justify-content: center;
+}
+.tkm-overlay.active { display: flex; }
+.tkm-box {
+  background: #fff;
+  border-radius: 14px;
+  width: 95%;
+  max-width: 560px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 40px rgba(0,0,0,0.18);
+}
+.tkm-header {
+  background: linear-gradient(135deg, #007976, #00a99d);
+  color: #fff;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+.tkm-header h3 { margin: 0; font-size: 16px; }
+.tkm-header .tkm-meta { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+.tkm-close {
+  background: rgba(255,255,255,0.2);
+  border: none;
+  color: #fff;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  transition: background .2s;
+}
+.tkm-close:hover { background: rgba(255,255,255,0.35); }
+.tkm-thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #f7f9fc;
+}
+.tkm-bubble {
+  max-width: 80%;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.tkm-bubble.student {
+  background: #e8f5e9;
+  border-bottom-left-radius: 2px;
+  align-self: flex-start;
+}
+.tkm-bubble.admin {
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+  border-bottom-right-radius: 2px;
+  align-self: flex-end;
+}
+.tkm-bubble .tkm-sender {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #555;
+}
+.tkm-bubble.admin .tkm-sender { color: #1565c0; }
+.tkm-bubble .tkm-time {
+  font-size: 11px;
+  color: #aaa;
+  text-align: right;
+  margin-top: 4px;
+}
+.tkm-footer {
+  padding: 12px 16px;
+  border-top: 1px solid #eee;
+  background: #fff;
+  flex-shrink: 0;
+}
+.tkm-footer textarea {
+  width: 100%;
+  border: 1.5px solid #ccc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  resize: none;
+  font-family: inherit;
+  transition: border-color .2s;
+  box-sizing: border-box;
+}
+.tkm-footer textarea:focus { outline: none; border-color: #007976; }
+.tkm-footer-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 8px;
+  gap: 8px;
+}
+.tkm-send-btn {
+  background: #007976;
+  color: #fff;
+  border: none;
+  padding: 9px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background .2s;
+}
+.tkm-send-btn:hover { background: #005f5c; }
+.tkm-send-btn:disabled { background: #aaa; cursor: not-allowed; }
+.tkm-read-btn {
+  background: transparent;
+  color: #007976;
+  border: 1.5px solid #007976;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .2s;
+}
+.tkm-read-btn:hover { background: #f0fdfc; }
+.tkm-closed-notice {
+  text-align: center;
+  color: #c62828;
+  background: #fff3f3;
+  border: 1px solid #ffcdd2;
+  border-radius: 8px;
+  padding: 12px;
+  font-size: 13px;
+  margin: 0;
+}
+.tkm-loading {
+  text-align: center;
+  padding: 30px;
+  color: #888;
+  font-size: 14px;
+}
+</style>
+
+<div class="tkm-overlay" id="ticketModal">
+  <div class="tkm-box">
+    <div class="tkm-header">
+      <div>
+        <h3 id="tkmTitle">Ticket hỗ trợ</h3>
+        <div class="tkm-meta" id="tkmMeta"></div>
+      </div>
+      <button class="tkm-close" onclick="closeTicketModal()">Đóng</button>
+    </div>
+
+    <div class="tkm-thread" id="tkmThread">
+      <div class="tkm-loading">Đang tải...</div>
+    </div>
+
+    <div class="tkm-footer" id="tkmFooter">
+      <textarea id="tkmReplyText" rows="3" placeholder="Nhập phản hồi của bạn..."></textarea>
+      <div class="tkm-footer-actions">
+        <form method="POST" action="dashboard.php" style="margin:0">
+          <input type="hidden" name="action" value="mark_read">
+          <input type="hidden" name="ticket_id" id="tkmTicketId">
+          <button type="submit" class="tkm-read-btn">Đã đọc</button>
+        </form>
+        <button class="tkm-send-btn" id="tkmSendBtn" onclick="submitTicketReply()">Gửi phản hồi</button>
+      </div>
+    </div>
+
+    <p class="tkm-closed-notice" id="tkmClosedNotice" style="display:none;margin:0 16px 16px;">
+      Ticket này đã được đóng. Bạn không thể gửi thêm tin nhắn.
+    </p>
   </div>
 </div>
 
@@ -931,6 +1103,7 @@ function openScheduleModal() {
 }
 // Chat context
 window.UTH_CONTEXT = {
+  userId: <?php echo (int)$_SESSION['user_id']; ?>,
   studentName: <?php echo json_encode($hoTen, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   studentFirstName: <?php echo json_encode($tenGoi, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
   mssv: <?php echo json_encode($mssv, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES); ?>,
@@ -993,15 +1166,121 @@ document.addEventListener('click', e => {
   }
 });
 
+// ======= TICKET MODAL 2 CHIỀU =======
+let _tkmCurrentId = null;
+
 function openStudentChat(id, title, content) {
-  document.getElementById('modalTitle').textContent = title || 'Phản hồi từ Ban quản trị';
-  document.getElementById('modalBody').textContent  = content || '';
-  document.getElementById('modalTicketId').value    = id;
+  _tkmCurrentId = id;
+  document.getElementById('tkmTitle').textContent = title || 'Ticket hỗ trợ';
+  document.getElementById('tkmMeta').textContent = 'Đang tải lịch sử...';
+  document.getElementById('tkmTicketId').value = id;
+  document.getElementById('tkmReplyText').value = '';
+  document.getElementById('tkmThread').innerHTML = '<div class="tkm-loading">Đang tải tin nhắn...</div>';
+  document.getElementById('tkmFooter').style.display = 'block';
+  document.getElementById('tkmClosedNotice').style.display = 'none';
+
   document.getElementById('ticketModal').classList.add('active');
+
+  fetch('../api/get_ticket_chat.php?id=' + id)
+    .then(r => r.json())
+    .then(data => {
+      const thread = document.getElementById('tkmThread');
+      thread.innerHTML = '';
+
+      // Tin nhắn gốc
+      if (content) {
+        thread.appendChild(makeBubble('student', 'Bạn (Câu hỏi ban đầu)', content, ''));
+      }
+
+      // Thread các tin nhắn
+      if (data.success && data.messages && data.messages.length > 0) {
+        data.messages.forEach(msg => {
+          const isAdmin = msg.sender_role === 'admin';
+          thread.appendChild(makeBubble(
+            isAdmin ? 'admin' : 'student',
+            isAdmin ? 'Admin UTH' : 'Bạn',
+            msg.message,
+            msg.time_str || ''
+          ));
+        });
+      } else if (!content) {
+        thread.innerHTML = '<div class="tkm-loading">Chưa có tin nhắn nào.</div>';
+      }
+
+      thread.scrollTop = thread.scrollHeight;
+
+      // Meta info
+      document.getElementById('tkmMeta').textContent =
+        'Ticket #' + id + (data.is_closed ? ' — Đã đóng' : ' — Đang mở');
+
+      // Ẩn/hiện footer rép
+      if (data.is_closed) {
+        document.getElementById('tkmFooter').style.display = 'none';
+        document.getElementById('tkmClosedNotice').style.display = 'block';
+      }
+    })
+    .catch(() => {
+      document.getElementById('tkmThread').innerHTML = '<div class="tkm-loading" style="color:red">Lỗi tải tin nhắn.</div>';
+    });
 }
+
+function makeBubble(role, senderName, text, timeStr) {
+  const div = document.createElement('div');
+  div.className = 'tkm-bubble ' + role;
+  div.innerHTML =
+    '<div class="tkm-sender">' + escSafe(senderName) + '</div>' +
+    '<div>' + escSafe(text).replace(/\n/g, '<br>') + '</div>' +
+    (timeStr ? '<div class="tkm-time">' + escSafe(timeStr) + '</div>' : '');
+  return div;
+}
+
+function escSafe(str) {
+  return String(str || '')
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#039;');
+}
+
+async function submitTicketReply() {
+  const text = document.getElementById('tkmReplyText').value.trim();
+  if (!text) return;
+
+  const btn = document.getElementById('tkmSendBtn');
+  btn.disabled = true;
+  btn.textContent = 'Đang gửi...';
+
+  try {
+    const formData = new FormData();
+    formData.append('ticket_id', _tkmCurrentId);
+    formData.append('message', text);
+
+    const res = await fetch('../api/student_reply.php', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    if (data.success) {
+      // Thêm bubble mới vào thread
+      const thread = document.getElementById('tkmThread');
+      thread.appendChild(makeBubble('student', 'Bạn', text, 'Vừa xong'));
+      thread.scrollTop = thread.scrollHeight;
+      document.getElementById('tkmReplyText').value = '';
+    } else {
+      alert('Gửi thất bại, vui lòng thử lại.');
+    }
+  } catch (e) {
+    alert('Lỗi kết nối, vui lòng thử lại.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Gửi phản hồi';
+  }
+}
+
+function closeTicketModal() {
+  document.getElementById('ticketModal').classList.remove('active');
+  _tkmCurrentId = null;
+}
+
+// Đóng modal khi click bên ngoài
 document.getElementById('ticketModal').addEventListener('click', e => {
-  if (e.target === document.getElementById('ticketModal'))
-    document.getElementById('ticketModal').classList.remove('active');
+  if (e.target === document.getElementById('ticketModal')) closeTicketModal();
 });
 
 const calendarData = {

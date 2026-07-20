@@ -74,7 +74,11 @@ body{display:flex;min-height:100vh}
 .menu-item.logout:hover{background:rgba(239,68,68,.2);color:#fff!important;}
 
 /* ===== MAIN CONTENT ===== */
-.main-content{flex:1;display:flex;flex-direction:column;min-height:100vh;overflow:hidden}
+.main-content{
+  flex:1;display:flex;flex-direction:column;
+  height:100vh;min-height:100vh;
+  overflow-x:hidden;overflow-y:auto;
+}
 
 /* ===== HEADER BAR ===== */
 .header{
@@ -163,6 +167,9 @@ tr:hover td{background:#f8fafc}
 }
 .badge.pending{background:var(--warn-lt);color:var(--warn)}
 .badge.replied,.badge.success{background:var(--success-lt);color:var(--success)}
+.badge.ok,.badge.active,.badge.resolved,.badge.waiting_student{background:var(--success-lt);color:var(--success)}
+.badge.open,.badge.in_progress,.badge.insufficient_context,.badge.clarification_needed,.badge.blocked{background:var(--warn-lt);color:var(--warn)}
+.badge.error,.badge.cancelled{background:var(--danger-lt);color:var(--danger)}
 .badge.read{background:var(--bg);color:var(--muted)}
 .badge.closed{background:#f1f5f9;color:var(--light)}
 
@@ -199,8 +206,8 @@ tr:hover td{background:#f8fafc}
 .modal-close-btn{
   position:absolute;top:16px;right:16px;
   background:rgba(254, 226, 226, 0.5);border:none;cursor:pointer;
-  font-size:24px;font-weight:bold;color:var(--danger);line-height:1;
-  width: 32px; height: 32px; border-radius: 50%;
+  font-size:12px;font-weight:700;color:var(--danger);line-height:1;
+  min-width: 46px; height: 32px; padding: 0 10px; border-radius: 8px;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.2s;
 }
@@ -264,8 +271,109 @@ label.field-label{font-size:12.5px;font-weight:500;color:var(--text)}
 /* Form grid 2-col */
 .form-grid-2{display:grid;grid-template-columns:1fr 1fr;gap:0 20px}
 
+/* Weekly schedule admin */
+.schedule-admin-grid{
+  display:grid;grid-template-columns:minmax(340px,460px) minmax(0,1fr);
+  gap:16px;margin-bottom:20px;align-items:start;
+}
+.schedule-form-panel{overflow:visible}
+.weekly-schedule-form{padding:16px 20px 18px}
+.schedule-form-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:0 14px;
+}
+.schedule-form-grid .faq-input{margin-bottom:12px}
+.field-span-2{grid-column:span 2}
+.schedule-time-pair{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;
+}
+.schedule-alert{
+  border-radius:8px;padding:10px 12px;margin-bottom:14px;
+  font-size:13px;font-weight:600;border:1px solid transparent;
+}
+.schedule-alert.success{background:var(--success-lt);color:var(--success);border-color:#bbf7d0}
+.schedule-alert.error{background:var(--danger-lt);color:var(--danger);border-color:#fecaca}
+.schedule-actions{
+  display:flex;justify-content:flex-end;padding-top:6px;
+  border-top:1px solid var(--border);
+}
+.schedule-list-panel{min-width:0}
+.schedule-table-wrap{max-height:560px;overflow:auto}
+.schedule-muted{font-size:12px;color:var(--muted)}
+.schedule-filter-empty{text-align:center;color:var(--muted);font-style:italic}
+.log-empty.compact{padding:36px 20px}
+
 /* Log tab empty */
 .log-empty{
   text-align:center;padding:60px 20px;
   font-size:14px;color:var(--muted);font-style:italic;
+}
+
+.log-stats .stat-value{font-size:30px}
+.log-filter-panel{padding:14px 16px;margin-bottom:16px}
+.log-filter-form{
+  display:grid;grid-template-columns:minmax(220px,1fr) 190px auto auto;
+  gap:10px;align-items:center;
+}
+.log-filter-form .faq-input{margin:0;height:38px}
+.log-layout{display:grid;grid-template-columns:360px minmax(0,1fr);gap:16px;align-items:start}
+.log-session-panel,.log-transcript-panel{min-height:520px}
+.log-session-list{max-height:640px;overflow-y:auto}
+.log-session-item{
+  display:block;text-decoration:none;color:var(--text);
+  padding:14px 16px;border-bottom:1px solid var(--border);
+  transition:background .15s,border-color .15s;
+}
+.log-session-item:last-child{border-bottom:none}
+.log-session-item:hover{background:#f8fafc}
+.log-session-item.active{background:#e0f2f1;border-left:3px solid var(--blue)}
+.log-session-top{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin-bottom:5px}
+.log-session-top b{font-size:14px;line-height:1.35}
+.log-session-top span{font-size:12px;color:var(--muted);white-space:nowrap}
+.log-session-meta{font-size:12px;color:var(--muted);margin-bottom:8px}
+.log-session-preview{font-size:13px;line-height:1.45;color:var(--text);margin-bottom:8px}
+.log-transcript-head{
+  display:flex;justify-content:space-between;gap:14px;align-items:flex-start;
+  padding:16px 18px;border-bottom:1px solid var(--border);
+}
+.log-transcript-head h3{padding:0;border:0;margin:0 0 4px;font-size:18px}
+.log-transcript-head p{margin:0;color:var(--muted);font-size:13px}
+.related-ticket-row{
+  display:flex;gap:8px;flex-wrap:wrap;align-items:center;
+  padding:10px 18px;border-bottom:1px solid var(--border);font-size:13px;color:var(--muted);
+}
+.related-ticket-row a{text-decoration:none}
+.log-thread{
+  display:flex;flex-direction:column;gap:12px;
+  padding:18px;max-height:680px;overflow-y:auto;background:#f8fafc;
+}
+.log-message{
+  width:min(78%,760px);border:1px solid var(--border);
+  border-radius:8px;padding:12px 14px;background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.04);
+}
+.log-message.user{align-self:flex-end;background:#e0f2f1;border-color:#b2dfdb}
+.log-message.assistant{align-self:flex-start}
+.log-message.system,.log-message.tool{align-self:center;background:#fff7ed;border-color:#fed7aa}
+.log-message-meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.log-message-meta b{font-size:13px}
+.log-message-meta span:not(.badge){font-size:12px;color:var(--muted)}
+.log-message-content{font-size:14px;line-height:1.6;white-space:normal}
+.log-message-foot{
+  margin-top:10px;padding-top:8px;border-top:1px dashed var(--border);
+  color:var(--muted);font-size:11.5px;line-height:1.5;
+}
+
+@media (max-width: 1100px){
+  .stats-grid{grid-template-columns:repeat(2,1fr)}
+  .schedule-admin-grid{grid-template-columns:1fr}
+  .log-layout{grid-template-columns:1fr}
+  .log-session-list{max-height:360px}
+}
+
+@media (max-width: 760px){
+  .schedule-form-grid{grid-template-columns:1fr}
+  .field-span-2{grid-column:span 1}
+  .schedule-time-pair{grid-template-columns:1fr 1fr}
+  .log-filter-form{grid-template-columns:1fr}
+  .log-message{width:100%}
 }
