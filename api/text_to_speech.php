@@ -36,7 +36,7 @@ if ($text === '') {
     ttsProxyJsonError(400, 'Vui lòng cung cấp văn bản để đọc.');
 }
 
-$pythonTtsUrl = getenv('PYTHON_TTS_URL') ?: 'http://127.0.0.1:8001/api/tts';
+$pythonTtsUrl = getenv('PYTHON_TTS_URL') ?: 'http://127.0.0.1:8000/api/tts';
 $payload = json_encode(['text' => $text], JSON_UNESCAPED_UNICODE);
 
 $ch = curl_init($pythonTtsUrl);
