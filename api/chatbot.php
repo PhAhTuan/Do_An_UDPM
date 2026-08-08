@@ -659,7 +659,31 @@ function buildGradesReply(PDO $pdo, array $student, string $question = '', ?int 
     if (!$rows) {
         return null;
     }
+        // ===== Thống kê GPA =====
+    $totalGpa = 0;
+    $totalSubjects = 0;
+    $completedSubjects = 0;
 
+    foreach ($rows as $row) {
+
+        if ($row['grade_4'] !== null && $row['grade_4'] !== '') {
+
+            $totalGpa += (float)$row['grade_4'];
+            $totalSubjects++;
+
+        }
+
+        if (
+            isset($row['result']) &&
+            strtolower(trim($row['result'])) === 'passed'
+        ) {
+            $completedSubjects++;
+        }
+    }
+
+    $gpa = $totalSubjects > 0
+        ? round($totalGpa / $totalSubjects, 2)
+        : 0;
     $matchedRows = gradeSubjectMatches($rows, $question);
     if (!$matchedRows && $sessionId && $beforeMessageId && !isAllGradeQuestion($question)) {
         $matchedRows = gradeSubjectMatches($rows, recentGradeSubjectQuestion($pdo, $sessionId, $beforeMessageId));
@@ -668,10 +692,38 @@ function buildGradesReply(PDO $pdo, array $student, string $question = '', ?int 
     if (isGradeImprovementQuestion($question)) {
         return buildGradeImprovementReply($rows, $matchedRows);
     }
+    // Xếp loại GPA
+    $classification = 'Chưa xếp loại';
 
+    if ($gpa >= 3.60) {
+      $classification = 'Xuất sắc';
+    } elseif ($gpa >= 3.20) {
+        $classification = 'Giỏi';
+    } elseif ($gpa >= 2.50) {
+        $classification = 'Khá';
+    } elseif ($gpa >= 2.00) {
+        $classification = 'Trung bình';
+    } else {
+        $classification = 'Yếu';
+    }
     $displayRows = $matchedRows ?: $rows;
-    $lines = [$matchedRows ? '<strong>Điểm môn được hỏi</strong>' : '<strong>Kết quả học tập hiện có</strong>'];
-    foreach ($displayRows as $row) {
+$lines = [];
+
+if (!$matchedRows) {
+
+    $lines[] = "<strong>📊 Tổng quan học tập</strong>";
+    $lines[] = "• GPA hiện tại: <strong>{$gpa}/4.0</strong>";
+    $lines[] = "• Xếp loại: <strong>{$classification}</strong>";
+    $lines[] = "• Học phần đã hoàn thành: <strong>{$completedSubjects}</strong>";
+
+    $lines[] = "";
+    $lines[] = "<strong>📚 Kết quả học tập</strong>";
+
+} else {
+
+    $lines[] = "<strong>📚 Điểm môn được hỏi</strong>";
+
+}    foreach ($displayRows as $row) {
         $lines[] = '- '.e($row['subject_name']).' ('.e($row['subject_code']).', '.e($row['semester']).'): '.e(gradeScoreText($row));
     }
     $lines[] = 'Lưu ý: đây là dữ liệu đang có trong database portal, không thay thế bảng điểm chính thức của Phòng Đào tạo.';
@@ -1420,7 +1472,7 @@ function retrieveFaqContextRows(PDO $pdo, string $question, int $userMessageId, 
 
     $faqThreshold = min(
         $baseThreshold,
-        (float)appSystemSetting($pdo, 'rag.faq_min_final_score', 0.48)
+        (float)appSystemSetting($pdo, 'rag.faq_min_final_score', 0.60)
     );
     $orderBy = $schema['priority'] ? 'priority DESC, id DESC' : 'id DESC';
     $rows = dbFetchAll($pdo, faqSelectSql($schema, $orderBy));
@@ -1462,10 +1514,18 @@ function retrieveFaqContextRows(PDO $pdo, string $question, int $userMessageId, 
                 $numberBonus = 0.25;
             }
         }
-        $finalScore = max(0.0, min(1.0, max(
-            $exactScore,
-            ($primaryScore * 0.74) + ($variationScore * 0.16) + ($answerScore * 0.10)
-        ) + $priorityBoost + $numberBonus - $mismatchPenalty));
+        if ($exactScore >= 0.90) {
+            $finalScore = 1.0;
+        } else {
+            $finalScore =
+                ($exactScore * 0.50) +
+                ($primaryScore * 0.30) +
+                ($variationScore * 0.15) +
+                ($answerScore * 0.05);
+
+            $finalScore += $priorityBoost + $numberBonus - $mismatchPenalty;
+            $finalScore = max(0.0, min(1.0, $finalScore));
+        }
 
         if ($finalScore < $faqThreshold) {
             continue;
@@ -1474,7 +1534,7 @@ function retrieveFaqContextRows(PDO $pdo, string $question, int $userMessageId, 
         $candidates[] = [
             'article_id' => null,
             'chunk_id' => null,
-            'title' => $row['tu_khoa'] ?: ($row['topic_group'] ?: 'FAQ UTH'),
+            'title' => $row['topic_group'] ?: ($row['tu_khoa'] ?: 'FAQ UTH'),
             'category' => $row['topic_group'] ?: 'FAQ',
             'intent_code' => 'faq_knowledge',
             'keywords' => $keywordText,
@@ -1487,7 +1547,7 @@ function retrieveFaqContextRows(PDO $pdo, string $question, int $userMessageId, 
             'academic_year_code' => null,
             'cohort_from' => null,
             'cohort_to' => null,
-            'heading' => $row['tu_khoa'] ?: ($row['topic_group'] ?: 'FAQ UTH'),
+            'heading' => $row['topic_group'] ?: ($row['tu_khoa'] ?: 'FAQ UTH'),
             'chunk_text' => $answerText,
             'article_score' => $keywordScore,
             'chunk_score' => $answerScore,
@@ -1500,12 +1560,16 @@ function retrieveFaqContextRows(PDO $pdo, string $question, int $userMessageId, 
     usort($candidates, fn($a, $b) => $b['final_score'] <=> $a['final_score']);
     if ($candidates) {
         $topScore = (float)$candidates[0]['final_score'];
-        $scoreWindow = $topScore >= 0.85 ? 0.025 : 0.12;
+        if ($topScore >= 0.90) {
+            $candidates = [$candidates[0]];
+        } else {
+        $scoreWindow = 0.03;
         $floorScore = max($faqThreshold, $topScore - $scoreWindow);
         $candidates = array_values(array_filter(
             $candidates,
             fn($row) => (float)$row['final_score'] >= $floorScore
         ));
+        }
     }
     $candidates = array_slice($candidates, 0, max(1, $limit));
 
